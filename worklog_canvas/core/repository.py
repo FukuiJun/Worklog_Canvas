@@ -300,6 +300,15 @@ class UserRepository:
         self.worklogs = [w if x.id == w.id else x for x in self.worklogs]
         self.save_worklogs()
 
+    def restore_worklog(self, w: Worklog) -> None:
+        """削除した作業バーを同じ id で戻す（元に戻す操作用）。"""
+        self._check_writable()
+        if any(x.id == w.id for x in self.worklogs):
+            raise ValueError(f"作業バー {w.id} は既にあります")
+        self._validate_worklog(w)
+        self.worklogs.append(w)
+        self.save_worklogs()
+
     def delete_worklog(self, worklog_id: str) -> Worklog:
         self._check_writable()
         w = self.get_worklog(worklog_id)
