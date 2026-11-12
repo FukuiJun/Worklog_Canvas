@@ -33,6 +33,67 @@ def day_label(d: _dt.date) -> str:
     return f"{d.month}/{d.day}({WEEKDAYS[d.weekday()]})"
 
 
+def paint_bar(p: QPainter, r: QRectF, w: Worklog, tasks, state: AppState, font: QFont, selected=False, drop=False,
+          faded=False) -> None:
+    """作業バーを1本描く（タイムラインとチーム一覧で共用）。"""
+    color = QColor(state.worklog_color(w, tasks))
+    if faded:
+        color.setAlpha(70)
+    border = QColor(color).darker(140)
+    width = 1.0
+    if selected:
+        border, width = QColor("#212121"), 2.0
+    if drop:
+        border, width = QColor("#1565C0"), 3.0
+    p.setPen(QPen(border, width))
+    p.setBrush(color)
+    p.drawRoundedRect(r, 4, 4)
+    # サブタスクの色の帯（右端）
+    for k, s in enumerate(w.subs):
+        sx = r.right() - (k + 1) * (SUB_STRIP_W + 1)
+        if sx <= r.left() + 20:
+            break
+        p.fillRect(QRectF(sx, r.top() + 3, SUB_STRIP_W, r.height() - 6),
+                   QColor(state.sub_color(s.kind, s.task_id, tasks)))
+    if faded:
+        return
+    # 文字
+    text_w = r.width() - 8 - len(w.subs) * (SUB_STRIP_W + 1)
+    if text_w < 12 or r.height() < 10:
+        return
+    p.setPen(text_color_for(color.name()))
+    fm = QFontMetrics(p.font())
+    lh = fm.height()
+    lines = []
+    name = tl.main_label(w, tasks)
+    dur = tu.format_hours(w.duration)
+    lines.append((f"{name}", True))
+    lines.append((f"{dur}  {tu.format_hhmm(w.start)}〜{tu.format_hhmm(w.end)}", False))
+    for sub in tl.sub_labels(w, tasks):
+        lines.append((f"＋ {sub}", False))
+    y = r.top() + 2
+    bold = QFont(p.font())
+    bold.setBold(True)
+    if r.height() < lh * 2 + 4:  # 低いバーは1行にまとめる
+        one = f"{name} {dur}" + (f"（＋{len(w.subs)}）" if w.subs else "")
+        p.drawText(QRectF(r.left() + 4, r.top(), text_w, r.height()), Qt.AlignVCenter | Qt.AlignLeft,
+                   fm.elidedText(one, Qt.ElideRight, int(text_w)))
+        return
+    fit = int((r.height() - 2) // lh)
+    if len(lines) > fit >= 3:  # 入りきらないサブタスクは件数で示す
+        hidden = len(lines) - (fit - 1)
+        lines = lines[:fit - 1] + [(f"＋ 他 {hidden} 件", False)]
+    for text, is_bold in lines:
+        if y + lh > r.bottom():
+            break
+        p.setFont(bold if is_bold else font)
+        fmx = QFontMetrics(p.font())
+        p.drawText(QRectF(r.left() + 4, y, text_w, lh), Qt.AlignLeft | Qt.AlignVCenter,
+                   fmx.elidedText(text, Qt.ElideRight, int(text_w)))
+        y += lh
+    p.setFont(font)
+
+
 # ===========================================================================
 class TimelineCanvas(QWidget):
     """日の列と作業バーを描き、マウス操作を受け付ける。"""
@@ -54,6 +115,19 @@ class TimelineCanvas(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._update_min_height()
+        state.settings_changed.connect(self.apply_settings)
+        state.repo_switched.connect(self._repo_switched)
+
+    def apply_settings(self) -> None:
+        self.view_start, self.view_end = self.state.settings.view_range
+        self._update_min_height()
+        self.update()
+        self.geometry_changed.emit()
+
+    def _repo_switched(self) -> None:
+        self.selected_id = None
+        self._drag = self._ghost = None
+        self.update()
 
     # --- 座標 ---------------------------------------------------------------
     def _update_min_height(self) -> None:
@@ -179,62 +253,8 @@ class TimelineCanvas(QWidget):
         r = self.bar_rect(w)
         if r is None:
             return
-        color = QColor(self.state.worklog_color(w, tasks))
-        if faded:
-            color.setAlpha(70)
-        border = QColor(color).darker(140)
-        width = 1.0
-        if w.id == self.selected_id or preview:
-            border, width = QColor("#212121"), 2.0
-        if w.id == self._drop_target:
-            border, width = QColor("#1565C0"), 3.0
-        p.setPen(QPen(border, width))
-        p.setBrush(color)
-        p.drawRoundedRect(r, 4, 4)
-        # サブタスクの色の帯（右端）
-        for k, s in enumerate(w.subs):
-            sx = r.right() - (k + 1) * (SUB_STRIP_W + 1)
-            if sx <= r.left() + 20:
-                break
-            p.fillRect(QRectF(sx, r.top() + 3, SUB_STRIP_W, r.height() - 6),
-                       QColor(self.state.sub_color(s.kind, s.task_id, tasks)))
-        if faded:
-            return
-        # 文字
-        text_w = r.width() - 8 - len(w.subs) * (SUB_STRIP_W + 1)
-        if text_w < 12 or r.height() < 10:
-            return
-        p.setPen(text_color_for(color.name()))
-        fm = QFontMetrics(p.font())
-        lh = fm.height()
-        lines = []
-        name = tl.main_label(w, tasks)
-        dur = tu.format_hours(w.duration)
-        lines.append((f"{name}", True))
-        lines.append((f"{dur}  {tu.format_hhmm(w.start)}〜{tu.format_hhmm(w.end)}", False))
-        for sub in tl.sub_labels(w, tasks):
-            lines.append((f"＋ {sub}", False))
-        y = r.top() + 2
-        bold = QFont(p.font())
-        bold.setBold(True)
-        if r.height() < lh * 2 + 4:  # 低いバーは1行にまとめる
-            one = f"{name} {dur}" + (f"（＋{len(w.subs)}）" if w.subs else "")
-            p.drawText(QRectF(r.left() + 4, r.top(), text_w, r.height()), Qt.AlignVCenter | Qt.AlignLeft,
-                       fm.elidedText(one, Qt.ElideRight, int(text_w)))
-            return
-        fit = int((r.height() - 2) // lh)
-        if len(lines) > fit >= 3:  # 入りきらないサブタスクは件数で示す
-            hidden = len(lines) - (fit - 1)
-            lines = lines[:fit - 1] + [(f"＋ 他 {hidden} 件", False)]
-        for text, is_bold in lines:
-            if y + lh > r.bottom():
-                break
-            p.setFont(bold if is_bold else self.font())
-            fmx = QFontMetrics(p.font())
-            p.drawText(QRectF(r.left() + 4, y, text_w, lh), Qt.AlignLeft | Qt.AlignVCenter,
-                       fmx.elidedText(text, Qt.ElideRight, int(text_w)))
-            y += lh
-        p.setFont(self.font())
+        paint_bar(p, r, w, tasks, self.state, self.font(), selected=(w.id == self.selected_id or preview),
+                  drop=(w.id == self._drop_target), faded=faded)
 
     # --- 通知 ---------------------------------------------------------------
     def _error(self, message: str) -> None:
@@ -242,6 +262,9 @@ class TimelineCanvas(QWidget):
         self.state.error.emit(message)
 
     def _run(self, fn, *args) -> bool:
+        if self.state.readonly:
+            self._error("閲覧モードでは編集できません")
+            return False
         try:
             fn(*args)
         except (OverlapError, ValidationError) as e:

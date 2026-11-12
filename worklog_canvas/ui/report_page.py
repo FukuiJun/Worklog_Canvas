@@ -165,11 +165,17 @@ class ReportPage(QWidget):
         self.btn_copy.clicked.connect(self.copy_text)
         for sig in (state.worklogs_changed, state.tasks_changed, state.categories_changed):
             sig.connect(self._mark_dirty)
+        state.repo_switched.connect(lambda: self._load_week(self.week))
         self.set_week(self.week)
 
     # --- 週 ---
     def set_week(self, week: _dt.date) -> None:
         self.save_note()  # 入力途中のメモを保存してから切り替える
+        self._load_week(week)
+
+    def _load_week(self, week: _dt.date) -> None:
+        """表示中の利用者の週次メモを読み込む（保存はしない。利用者の切り替え時にも使う）。"""
+        self._save_timer.stop()
         self.week = tu.week_start(week)
         note = self.state.repo.get_weekly_note(self.week)
         self._loading = True

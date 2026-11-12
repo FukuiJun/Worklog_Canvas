@@ -40,10 +40,19 @@ WEEKLY_NOTES_FILE = "weekly_notes.json"
 PROFILE_FILE = "profile.json"
 CATEGORIES_FILE = "categories.json"
 USERS_DIR = "users"
+USER_FILES = (TASKS_FILE, WORKLOGS_FILE, WEEKLY_NOTES_FILE, PROFILE_FILE)
 
 
 class ReadOnlyError(PermissionError):
     """閲覧モード（他メンバーのデータ）で書き込もうとした。"""
+
+
+class CategoryInUseError(ValueError):
+    """自分のデータにそのカテゴリを使うタスクがあるため、削除・名称変更できない。"""
+
+    def __init__(self, name: str, count: int):
+        super().__init__(f"カテゴリ「{name}」は {count} 件のタスクで使われているため、変更できません")
+        self.count = count
 
 
 def _today() -> _dt.date:
@@ -109,6 +118,35 @@ class DataFolder:
     def category_colors(self) -> dict[str, str]:
         return {c.name: c.color for c in self.load_categories()}
 
+    def _write_categories(self, cats: list[Category]) -> None:
+        storage.atomic_write_json(
+            self.categories_path, {"version": SCHEMA_VERSION, "categories": [c.to_dict() for c in cats]})
+
+    def rename_category(self, old: str, new: str, own_tasks: Iterable[Task]) -> None:
+        """カテゴリ名を変える。自分のデータにそのカテゴリを使うタスクが0件のときだけ可能（仕様 5.2）。"""
+        used = sum(1 for t in own_tasks if t.category == old)
+        if used:
+            raise CategoryInUseError(old, used)
+        current = self.load_categories()
+        target = next((c for c in current if c.name == old), None)
+        if target is None:
+            raise KeyError(old)
+        if new != old and any(c.name == new for c in current):
+            raise ValidationError("カテゴリ名", f"カテゴリ「{new}」は既にあります")
+        renamed = Category(new.strip(), target.color)
+        renamed.validate()
+        self._write_categories([renamed if c.name == old else c for c in current])
+
+    def delete_category(self, name: str, own_tasks: Iterable[Task]) -> None:
+        """カテゴリを削除する。自分のデータにそのカテゴリを使うタスクが0件のときだけ可能（仕様 5.2）。"""
+        used = sum(1 for t in own_tasks if t.category == name)
+        if used:
+            raise CategoryInUseError(name, used)
+        current = self.load_categories()
+        if not any(c.name == name for c in current):
+            raise KeyError(name)
+        self._write_categories([c for c in current if c.name != name])
+
 
 class UserRepository:
     """1人分のデータ。変更系メソッドは呼ぶたびに該当ファイルへ自動保存する。"""
@@ -125,6 +163,10 @@ class UserRepository:
         self.profile = Profile(display_name=username)
         self._next_task = 1
         self._next_worklog = 1
+        # 保存に失敗して、まだファイルに書けていないもの（ファイル名）。retry_pending() で再試行する。
+        self.pending: set[str] = set()
+        self.last_save_error: Exception | None = None
+        self.on_save_state: Callable[["UserRepository"], None] | None = None
 
     # --- パス ---
     @property
@@ -155,38 +197,63 @@ class UserRepository:
         if self.readonly:
             raise ReadOnlyError("閲覧モードでは編集できません")
 
-    def save_tasks(self) -> None:
-        self._check_writable()
-        storage.atomic_write_json(self.path(TASKS_FILE), {
-            "version": SCHEMA_VERSION,
-            "next_id": self._next_task,
-            "tasks": [t.to_dict() for t in self.tasks],
-        })
+    def _payload(self, name: str):
+        if name == TASKS_FILE:
+            return {"version": SCHEMA_VERSION, "next_id": self._next_task,
+                    "tasks": [t.to_dict() for t in self.tasks]}
+        if name == WORKLOGS_FILE:
+            return {"version": SCHEMA_VERSION, "next_id": self._next_worklog,
+                    "worklogs": [w.to_dict() for w in sorted(self.worklogs, key=lambda w: (w.date, w.start, w.id))]}
+        if name == WEEKLY_NOTES_FILE:
+            return {"version": SCHEMA_VERSION,
+                    "weekly_notes": [n.to_dict() for n in sorted(self.weekly_notes, key=lambda n: n.week_start)]}
+        if name == PROFILE_FILE:
+            return self.profile.to_dict()
+        raise KeyError(name)
 
-    def save_worklogs(self) -> None:
-        self._check_writable()
-        storage.atomic_write_json(self.path(WORKLOGS_FILE), {
-            "version": SCHEMA_VERSION,
-            "next_id": self._next_worklog,
-            "worklogs": [w.to_dict() for w in sorted(self.worklogs, key=lambda w: (w.date, w.start, w.id))],
-        })
+    def _save(self, name: str) -> bool:
+        """name のファイルを保存する。
 
-    def save_weekly_notes(self) -> None:
+        書き込みに失敗（OSError）しても例外にはせず、画面の変更はそのまま保持して「未保存」として記録する
+        （仕様9章: 画面下部に「未保存」を表示し、30秒ごとに再試行）。元のファイルは壊れない（AC-18）。
+        """
         self._check_writable()
-        storage.atomic_write_json(self.path(WEEKLY_NOTES_FILE), {
-            "version": SCHEMA_VERSION,
-            "weekly_notes": [n.to_dict() for n in sorted(self.weekly_notes, key=lambda n: n.week_start)],
-        })
+        try:
+            storage.atomic_write_json(self.path(name), self._payload(name))
+        except OSError as e:
+            self.pending.add(name)
+            self.last_save_error = e
+            self._notify()
+            return False
+        if name in self.pending:
+            self.pending.discard(name)
+            self._notify()
+        return True
 
-    def save_profile(self) -> None:
-        self._check_writable()
-        storage.atomic_write_json(self.path(PROFILE_FILE), self.profile.to_dict())
+    def _notify(self) -> None:
+        if self.on_save_state:
+            self.on_save_state(self)
 
-    def save_all(self) -> None:
-        self.save_profile()
-        self.save_tasks()
-        self.save_worklogs()
-        self.save_weekly_notes()
+    def retry_pending(self) -> bool:
+        """未保存のファイルを保存し直す。すべて保存できたら True。"""
+        for name in sorted(self.pending):
+            self._save(name)
+        return not self.pending
+
+    def save_tasks(self) -> bool:
+        return self._save(TASKS_FILE)
+
+    def save_worklogs(self) -> bool:
+        return self._save(WORKLOGS_FILE)
+
+    def save_weekly_notes(self) -> bool:
+        return self._save(WEEKLY_NOTES_FILE)
+
+    def save_profile(self) -> bool:
+        return self._save(PROFILE_FILE)
+
+    def save_all(self) -> bool:
+        return all([self.save_profile(), self.save_tasks(), self.save_worklogs(), self.save_weekly_notes()])
 
     # --- タスク（F-01） ---
     def get_task(self, task_id: str) -> Task:
@@ -351,5 +418,7 @@ class UserRepository:
         self._check_writable()
         if not name or not name.strip():
             raise ValidationError("表示名", "表示名を入力してください")
+        if len(name.strip()) > 20:
+            raise ValidationError("表示名", "表示名は20文字以内で入力してください")
         self.profile = Profile(display_name=name.strip())
         self.save_profile()
