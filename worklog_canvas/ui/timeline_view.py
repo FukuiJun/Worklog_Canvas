@@ -3,14 +3,18 @@ from __future__ import annotations
 
 import datetime as _dt
 
-from PySide6.QtCore import QMimeData, QPoint, QPointF, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QCursor, QDrag, QFont, QFontMetrics, QPainter, QPen
+from pathlib import Path
+
+from PySide6.QtCore import QMimeData, QPoint, QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QDrag, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import (
-    QButtonGroup, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QPushButton,
-    QScrollArea, QSizePolicy, QToolButton, QToolTip, QVBoxLayout, QWidget,
+    QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QMessageBox,
+    QPushButton, QScrollArea, QSizePolicy, QToolButton, QToolTip, QVBoxLayout, QWidget,
 )
 
 from ..core import aggregate as ag
+from ..core import applog
+from ..core import ics
 from ..core import timeline as tl
 from ..core import timeutil as tu
 from ..core.models import KIND_ONEOFF, KIND_TASK, SubItem, ValidationError, Worklog
@@ -27,6 +31,18 @@ MIN_HOUR_PX = 40
 EDGE_PX = 6  # 上端・下端の伸縮つまみの高さ
 DRAG_THRESHOLD = 4
 SUB_STRIP_W = 6
+APPT_COLOR = QColor(92, 107, 192)  # 予定バー（斜線模様の半透明）
+APPT_STRIP_W = 5  # 作業バーの上にも見える、予定の目印（列の左端）
+log = applog.get()
+
+
+def ics_path_from(mime) -> str | None:
+    """ドラッグされたものが .ics ファイルならそのパス。"""
+    if mime.hasUrls():
+        for url in mime.urls():
+            if url.isLocalFile() and url.toLocalFile().lower().endswith(".ics"):
+                return url.toLocalFile()
+    return None
 
 
 def day_label(d: _dt.date) -> str:
@@ -100,6 +116,7 @@ class TimelineCanvas(QWidget):
 
     geometry_changed = Signal()
     selection_changed = Signal()
+    ics_dropped = Signal(str)
 
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
@@ -110,6 +127,7 @@ class TimelineCanvas(QWidget):
         self._drag: dict | None = None  # 進行中のドラッグ
         self._ghost: tuple[int, int, int] | None = None  # (列, 開始分, 終了分) 作成中の範囲
         self._drop_target: str | None = None  # ドロップ先としてハイライトする作業バー
+        self.appointments: list[ics.Appointment] = []  # 表示中の日にかかる予定（予定表ファイルから）
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -193,6 +211,80 @@ class TimelineCanvas(QWidget):
         super().resizeEvent(ev)
         self.geometry_changed.emit()
 
+    # --- 予定バー（F-05） ---
+    def show_appointments(self) -> bool:
+        return not self.state.viewing_other  # 予定表ファイルは自分のもの。他メンバーの閲覧中は出さない
+
+    def appointment_rects(self):
+        """(予定, 日付, 矩形) の一覧。終日の予定は見出しに出すので含めない。"""
+        if not self.show_appointments():
+            return []
+        out = []
+        for col, d in enumerate(self.dates):
+            for a in self.appointments:
+                span = a.span_on(d)
+                if span is None:
+                    continue
+                top, bottom = max(span[0], self.view_start), min(span[1], self.view_end)
+                if bottom <= top:
+                    continue
+                out.append((a, d, QRectF(self.col_x(col) + 1, self.y_of(top), self.col_width() - 2,
+                                         self.y_of(bottom) - self.y_of(top))))
+        return out
+
+    def appointment_at(self, pos: QPointF):
+        for a, d, r in self.appointment_rects():
+            if r.contains(pos):
+                return a, d
+        return None
+
+    def all_day_on(self, d: _dt.date) -> list[ics.Appointment]:
+        if not self.show_appointments():
+            return []
+        return [a for a in self.appointments if a.all_day and d in a.days()]
+
+    def _paint_appointments(self, p: QPainter, strips_only: bool = False) -> None:
+        for a, d, r in self.appointment_rects():
+            if strips_only:  # 作業バーの上にも見える目印（白地に斜線。どの色のバーの上でも見える）
+                strip = QRectF(r.left() + 1, r.top() + 1, APPT_STRIP_W, r.height() - 2)
+                p.fillRect(strip, QColor("#FFFFFF"))
+                p.fillRect(strip, QBrush(APPT_COLOR.darker(130), Qt.BDiagPattern))
+                p.setPen(QPen(APPT_COLOR.darker(130), 1))
+                p.setBrush(Qt.NoBrush)
+                p.drawRect(strip)
+                continue
+            fill = QColor(APPT_COLOR)
+            fill.setAlpha(28)
+            p.setPen(Qt.NoPen)
+            p.setBrush(fill)
+            p.drawRect(r)
+            hatch = QColor(APPT_COLOR)
+            hatch.setAlpha(110)
+            p.setBrush(QBrush(hatch, Qt.BDiagPattern))
+            p.drawRect(r)
+            p.setPen(QPen(APPT_COLOR, 1, Qt.DashLine))
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(r)
+            if r.height() >= 12:
+                p.setPen(QColor("#283593"))
+                fm = QFontMetrics(p.font())
+                text = f"{a.title}  {a.start:%H:%M}〜{a.end:%H:%M}"
+                p.drawText(r.adjusted(APPT_STRIP_W + 3, 1, -3, 0), Qt.AlignLeft | Qt.AlignTop,
+                           fm.elidedText(text, Qt.ElideRight, int(r.width() - APPT_STRIP_W - 6)))
+
+    def convert_appointment(self, a: ics.Appointment, d: _dt.date) -> bool:
+        """予定バーを作業バーにする（取込元=Outlook、単発作業、タイトル=件名）。"""
+        try:
+            w = ics.to_worklog(a, d)
+        except ValueError as e:
+            self._error(str(e))
+            return False
+        if self._run(self.state.editor.add, w, "作業バーにする"):
+            self.selected_id = self.state.repo.worklogs[-1].id
+            self.update()
+            return True
+        return False
+
     # --- 描画 ---------------------------------------------------------------
     def paintEvent(self, ev):
         p = QPainter(self)
@@ -226,6 +318,9 @@ class TimelineCanvas(QWidget):
         for i in range(len(self.dates) + 1):
             x = self.col_x(i)
             p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
+        # 予定バー（作業バーの下）
+        p.setFont(self.font())
+        self._paint_appointments(p)
         # 作業バー
         tasks = self.state.tasks_by_id()
         p.setFont(self.font())
@@ -238,6 +333,7 @@ class TimelineCanvas(QWidget):
                 self._paint_bar(p, w, tasks)
         if self._drag and self._drag.get("active") and self._drag.get("preview") is not None:
             self._paint_bar(p, self._drag["preview"], tasks, preview=True)
+        self._paint_appointments(p, strips_only=True)
         if self._ghost:
             col, s, e = self._ghost
             r = QRectF(self.col_x(col) + 2, self.y_of(s), cw - 4, self.y_of(e) - self.y_of(s))
@@ -305,6 +401,13 @@ class TimelineCanvas(QWidget):
         pos = ev.position()
         if not self._drag:
             self._update_cursor(pos)
+            if self.hit(pos) is None:
+                hit = self.appointment_at(pos)
+                if hit:
+                    a = hit[0]
+                    QToolTip.showText(ev.globalPosition().toPoint(),
+                                      f"予定：{a.title}\n{a.start:%m/%d %H:%M}〜{a.end:%H:%M}\n"
+                                      "右クリック →「作業バーにする」", self)
             return
         d = self._drag
         if not d["active"]:
@@ -395,7 +498,16 @@ class TimelineCanvas(QWidget):
 
     def contextMenuEvent(self, ev):
         h = self.hit(QPointF(ev.pos()))
-        if not h or self.state.readonly:
+        if self.state.readonly:
+            return
+        if not h:
+            hit = self.appointment_at(QPointF(ev.pos()))
+            if hit:
+                menu = QMenu(self)
+                act = QAction("作業バーにする", menu)
+                act.triggered.connect(lambda: self.convert_appointment(*hit))
+                menu.addAction(act)
+                menu.exec(ev.globalPos())
             return
         w = h[0]
         self.selected_id = w.id
@@ -434,10 +546,16 @@ class TimelineCanvas(QWidget):
         return date, tl.resolve_drop(self._day_bars(date), self.minute_at(pos.y()))
 
     def dragEnterEvent(self, ev):
+        if ics_path_from(ev.mimeData()) and not self.state.viewing_other:
+            ev.acceptProposedAction()
+            return
         if ev.mimeData().hasFormat(TASK_MIME) and not self.state.readonly:
             ev.acceptProposedAction()
 
     def dragMoveEvent(self, ev):
+        if ics_path_from(ev.mimeData()) and not self.state.viewing_other:
+            ev.acceptProposedAction()
+            return
         if not ev.mimeData().hasFormat(TASK_MIME) or self.state.readonly:
             return
         date, res = self._drop_info(ev.position())
@@ -455,6 +573,11 @@ class TimelineCanvas(QWidget):
 
     def dropEvent(self, ev):
         self._ghost, self._drop_target = None, None
+        path = ics_path_from(ev.mimeData())
+        if path:
+            ev.acceptProposedAction()
+            self.ics_dropped.emit(path)
+            return
         task_id = bytes(ev.mimeData().data(TASK_MIME)).decode("utf-8")
         date, res = self._drop_info(ev.position())
         ev.acceptProposedAction()
@@ -504,9 +627,64 @@ class _ColumnStrip(QWidget):
 
 
 class TimelineHeader(_ColumnStrip):
+    """日付の見出し。終日の予定は、その日の列の上部に件名だけ表示する（F-05）。"""
+
+    BASE = 28
+    LINE = 16
+    MAX_LINES = 2
+
     def texts(self):
         today = self.canvas.state.today()
         return [(day_label(d), d == today) for d in self.canvas.dates]
+
+    def update_height(self) -> None:
+        n = max((len(self.canvas.all_day_on(d)) for d in self.canvas.dates), default=0)
+        self.setFixedHeight(self.BASE + self.LINE * min(n, self.MAX_LINES) + (3 if n else 0))
+        self.update()
+
+    def paintEvent(self, ev):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor("#F5F5F5"))
+        p.setPen(QColor("#D0D0D0"))
+        p.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
+        cw = self.canvas.col_width()
+        today = self.canvas.state.today()
+        for i, d in enumerate(self.canvas.dates):
+            x = self.canvas.col_x(i)
+            f = QFont(self.font())
+            f.setBold(d == today)
+            p.setFont(f)
+            p.setPen(QColor("#1565C0") if d == today else QColor("#333333"))
+            p.drawText(QRectF(x, 0, cw, self.BASE), Qt.AlignCenter, day_label(d))
+            p.setFont(self.font())
+            fm = QFontMetrics(self.font())
+            items = self.canvas.all_day_on(d)
+            shown = items if len(items) <= self.MAX_LINES else items[:self.MAX_LINES - 1]
+            for k, a in enumerate(shown):
+                r = QRectF(x + 2, self.BASE + k * self.LINE, cw - 4, self.LINE - 1)
+                fill = QColor(APPT_COLOR)
+                fill.setAlpha(40)
+                p.fillRect(r, fill)
+                p.fillRect(r, QBrush(APPT_COLOR.lighter(130), Qt.BDiagPattern))
+                p.setPen(QColor("#283593"))
+                p.drawText(r.adjusted(4, 0, -2, 0), Qt.AlignLeft | Qt.AlignVCenter,
+                           fm.elidedText(a.title, Qt.ElideRight, int(r.width() - 6)))
+            if len(items) > self.MAX_LINES:
+                r = QRectF(x + 2, self.BASE + (self.MAX_LINES - 1) * self.LINE, cw - 4, self.LINE - 1)
+                p.setPen(QColor("#283593"))
+                p.drawText(r.adjusted(4, 0, 0, 0), Qt.AlignLeft | Qt.AlignVCenter,
+                           f"他 {len(items) - self.MAX_LINES + 1} 件の終日の予定")
+        p.end()
+
+    def event(self, ev):
+        if ev.type() == ev.Type.ToolTip:
+            col = self.canvas.column_at(ev.pos().x())
+            if col is not None:
+                items = self.canvas.all_day_on(self.canvas.dates[col])
+                if items:
+                    QToolTip.showText(ev.globalPos(), "終日の予定：\n" + "\n".join(a.title for a in items), self)
+                    return True
+        return super().event(ev)
 
 
 class TimelineFooter(_ColumnStrip):
@@ -589,10 +767,10 @@ class TimelineTab(QWidget):
             b.setMinimumWidth(40)
             grp.addButton(b)
         self.btn_import = QPushButton("予定を取り込む")
+        self.btn_import.setToolTip("Outlookから保存した予定表ファイル（.ics）を選ぶ。タイムラインへドラッグ＆ドロップしても読み込めます")
         self.btn_reload = QPushButton("再読み込み")
-        for b in (self.btn_import, self.btn_reload):
-            b.setEnabled(False)
-            b.setToolTip("予定表ファイル（.ics）の取り込みは今後のバージョンで対応します")
+        self.btn_reload.setToolTip("前回読み込んだ予定表ファイルを読み直す")
+        self.ics_file: ics.IcsFile | None = None
         for wdg in (self.btn_prev, self.btn_today, self.btn_next):
             bar.addWidget(wdg)
         bar.addSpacing(12)
@@ -648,7 +826,87 @@ class TimelineTab(QWidget):
         state.worklogs_changed.connect(self.refresh_canvas)
         state.tasks_changed.connect(self.refresh_all)
         state.categories_changed.connect(self.refresh_all)
+        state.repo_switched.connect(lambda: self._update_appointments(announce=False))
+        self.btn_import.clicked.connect(self.choose_ics)
+        self.btn_reload.clicked.connect(self.reload_ics)
+        self.canvas.ics_dropped.connect(self.load_ics)
+        if state.settings.ics_path:  # 前回の予定表ファイルから再表示（5.3）
+            self._open_ics(state.settings.ics_path, announce_errors=False)
         self.set_mode(self.mode)
+
+    # --- 予定表ファイル（F-05） ---
+    def choose_ics(self) -> None:
+        start = str(Path(self.state.settings.ics_path).parent) if self.state.settings.ics_path else str(Path.home())
+        path, _ = QFileDialog.getOpenFileName(self, "予定表ファイル（.ics）を選ぶ", start,
+                                              "予定表ファイル (*.ics);;すべて (*)")
+        if path:
+            self.load_ics(path)
+
+    def load_ics(self, path: str) -> bool:
+        """予定表ファイルを読み込む。読めなければメッセージを出し、予定バーは変更しない。"""
+        if not self._open_ics(path, announce_errors=True):
+            return False
+        self.state.settings.ics_path = str(path)
+        try:
+            self.state.settings.save()
+        except OSError:
+            pass
+        self._update_appointments(announce=True)
+        return True
+
+    def reload_ics(self) -> None:
+        path = self.state.settings.ics_path
+        if not path:
+            self.state.error.emit("予定表ファイルがまだ読み込まれていません。「予定を取り込む」で選んでください")
+            return
+        if self._open_ics(path, announce_errors=True):
+            self._update_appointments(announce=True)
+
+    def _open_ics(self, path: str, announce_errors: bool) -> bool:
+        try:
+            f = ics.IcsFile(path)
+        except FileNotFoundError:
+            log.warning("予定表ファイルが見つかりません")
+            self.ics_file = None
+            self._update_appointments(announce=False)
+            # 起動直後は画面の準備ができてから表示する（画面下部に表示、9章）
+            QTimer.singleShot(0, lambda: self.state.error.emit(ics.NOT_FOUND_MESSAGE))
+            return False
+        except ics.IcsFormatError as e:
+            log.warning("予定表ファイルを読み取れませんでした（%s）", e.detail)
+            if announce_errors:
+                QMessageBox.warning(self, "予定を取り込む", ics.FORMAT_ERROR_MESSAGE)
+            self.state.error.emit(ics.FORMAT_ERROR_MESSAGE)
+            return False
+        except OSError as e:
+            log.warning("予定表ファイルを開けませんでした: %s", e)
+            self.state.error.emit(f"{ics.FORMAT_ERROR_MESSAGE}（{e.strerror or e}）")
+            return False
+        self.ics_file = f
+        log.info("予定表ファイルを読み込みました（読み飛ばし %d 件）", f.bad_events)
+        return True
+
+    def _update_appointments(self, announce: bool = True) -> None:
+        """表示中の日にかかる予定を、読み込んだ予定表ファイルから展開する（週を切り替えたときも同じファイルから）。"""
+        dates = self.canvas.dates
+        appts: list[ics.Appointment] = []
+        if self.ics_file is not None and dates:
+            weeks = sorted({tu.week_start(d) for d in dates})
+            skipped = 0
+            found_in_week = 0
+            for w in weeks:
+                r = self.ics_file.week(w)
+                skipped += r.skipped
+                found_in_week += len(r.appointments)
+                appts += [a for a in r.appointments if any(d in dates for d in a.days())]
+            if announce and not self.state.viewing_other:
+                if skipped:
+                    self.state.error.emit(f"{skipped}件の予定を読み飛ばしました")
+                elif found_in_week == 0:
+                    self.state.info.emit(ics.EMPTY_WEEK_MESSAGE)
+        self.canvas.appointments = appts
+        self.canvas.update()
+        self.header.update_height()
 
     # --- 表示の切り替え ---
     def set_mode(self, mode: str) -> None:
@@ -674,6 +932,8 @@ class TimelineTab(QWidget):
             self.period_label.setText(f"{dates[0]:%Y/%m/%d}〜{dates[-1]:%m/%d}")
         self.canvas.set_dates(dates)
         self.footer.update()
+        if hasattr(self, "ics_file"):
+            self._update_appointments(announce=self.ics_file is not None)
 
     def refresh_canvas(self) -> None:
         self.canvas.update()
