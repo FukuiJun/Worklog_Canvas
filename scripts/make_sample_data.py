@@ -25,11 +25,11 @@ from worklog_canvas.core import timeutil as tu  # noqa: E402
 from worklog_canvas.core.repository import SCHEMA_VERSION  # noqa: E402
 
 CATEGORIES = [
-    Category("次世代基板", "#4E79A7"),
-    Category("治具", "#F28E2B"),
-    Category("チャージャIC", "#59A14F"),
-    Category("文書", "#B07AA1"),
-    Category("管理", "#76B7B2"),
+    Category("次世代基板", "#2A78D6"),
+    Category("治具", "#EB6834"),
+    Category("チャージャIC", "#1BAF7A"),
+    Category("文書", "#EDA100"),
+    Category("管理", "#E87BA4"),
 ]
 
 D = dt.date

@@ -214,3 +214,116 @@ def remaining_days(task: Task, today: _dt.date) -> int | None:
 
 def hours(minutes_map: Mapping[str, int]) -> dict[str, float]:
     return {k: v / 60 for k, v in minutes_map.items()}
+
+
+# --- 集計画面（F-04）用 --------------------------------------------------------
+PERIOD_DAY, PERIOD_WEEK, PERIOD_CUSTOM = "day", "week", "custom"
+
+
+def period_range(mode: str, anchor: _dt.date, start: _dt.date | None = None,
+                 end: _dt.date | None = None) -> tuple[_dt.date, _dt.date]:
+    """期間（両端を含む）。日=anchor の1日、週=anchor を含む月〜日、任意=start〜end（逆なら入れ替え）。"""
+    if mode == PERIOD_DAY:
+        return anchor, anchor
+    if mode == PERIOD_WEEK:
+        s = tu.week_start(anchor)
+        return s, s + _dt.timedelta(days=6)
+    s, e = start or anchor, end or anchor
+    return (s, e) if s <= e else (e, s)
+
+
+@dataclass
+class Segment:
+    key: str  # タスクid、または「単発作業」
+    category: str  # カテゴリ名（単発作業は「単発作業」、未設定は「（未分類）」）
+    minutes: int
+
+
+@dataclass
+class DayStack:
+    date: _dt.date
+    working: int
+    segments: list[Segment]
+
+
+def category_order(tasks: Iterable[Task], categories: Iterable[str]) -> list[str]:
+    """積み上げの順・凡例の順: categories.json の順 → それ以外のカテゴリ → （未分類） → 単発作業。"""
+    order = list(dict.fromkeys(categories))
+    for t in tasks:
+        name = t.category or UNCATEGORIZED_LABEL
+        if name not in order and name != UNCATEGORIZED_LABEL:
+            order.append(name)
+    return order + [UNCATEGORIZED_LABEL, ONEOFF_LABEL]
+
+
+def daily_stacks(worklogs: Iterable[Worklog], tasks: Iterable[Task], start: _dt.date, end: _dt.date,
+                 categories: Iterable[str] = ()) -> list[DayStack]:
+    """日別のタスク別時間（メイン時間）を、積み上げ棒グラフ用に並べる。
+
+    積み上げの順はどの日も同じ（カテゴリの順 → タスクid）。単発作業は最上段に1つ。
+    """
+    tasks = list(tasks)
+    cat_of = {t.id: (t.category or UNCATEGORIZED_LABEL) for t in tasks}
+    order = category_order(tasks, categories)
+    rank = {c: i for i, c in enumerate(order)}
+    out = []
+    for day in daily_summary(worklogs, tasks, start, end):
+        segs = [Segment(tid, cat_of.get(tid, UNCATEGORIZED_LABEL), m) for tid, m in day.by_task.items()]
+        segs.sort(key=lambda s: (rank.get(s.category, len(order)), s.key))
+        if day.oneoff:
+            segs.append(Segment(ONEOFF_LABEL, ONEOFF_LABEL, day.oneoff))
+        out.append(DayStack(day.date, day.working, segs))
+    return out
+
+
+@dataclass
+class ProgressRow:
+    task: Task
+    actual: int  # 実績時間（メイン時間の累計、分）
+    sub: int  # サブ時間の累計（分）
+    period_main: int  # 期間内のメイン時間（分）
+    period_sub: int  # 期間内のサブ時間（分）
+    remaining_days: int | None  # 完了予定日までの残り日数（過ぎていれば負）
+
+    @property
+    def over_estimate(self) -> bool:
+        """実績時間が予定工数を超えているか。"""
+        est = self.task.estimate_hours
+        return est is not None and self.actual > round(est * 60)
+
+
+_STATUS_RANK = {"進行中": 0, "未着手": 1, "保留": 2, "完了": 3}
+
+
+def progress_rows(tasks: Iterable[Task], worklogs: Iterable[Worklog], start: _dt.date, end: _dt.date,
+                  today: _dt.date) -> list[ProgressRow]:
+    """タスクごとの進捗バーの行。対象は未完了のタスクと、期間内に作業バー（メイン・サブ）があるタスク。
+
+    並びは ステータス（進行中→未着手→保留→完了）→ 完了予定日（未設定は後ろ）→ id。
+    """
+    worklogs = list(worklogs)
+    main_all = minutes_by_task(worklogs)
+    sub_all = sub_minutes_by_task(worklogs)
+    in_period = filter_period(worklogs, start, end)
+    main_p = minutes_by_task(in_period)
+    sub_p = sub_minutes_by_task(in_period)
+    rows = []
+    for t in tasks:
+        if not t.is_open and t.id not in main_p and t.id not in sub_p:
+            continue
+        rows.append(ProgressRow(t, main_all.get(t.id, 0), sub_all.get(t.id, 0), main_p.get(t.id, 0),
+                                sub_p.get(t.id, 0), remaining_days(t, today)))
+    rows.sort(key=lambda r: (_STATUS_RANK.get(r.task.status, 9),
+                             r.task.planned_end or _dt.date.max, r.task.id))
+    return rows
+
+
+def nice_ticks(max_value: float, target: int = 5) -> list[float]:
+    """0 から max_value 以上までのきりのよい目盛り（時間の軸用）。"""
+    if max_value <= 0:
+        return [0, 1]
+    for step in (0.5, 1, 2, 4, 5, 10, 20, 25, 50, 100, 200, 500):
+        if max_value / step <= target:
+            break
+    n = int(-(-max_value // step))
+    return [i * step for i in range(n + 1)]

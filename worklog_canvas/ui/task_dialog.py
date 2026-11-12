@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
+from ..core.colors import next_category_color
 from ..core.models import (
     PRIORITIES, STATUS_DONE, STATUSES, TASK_NAME_MAX, Category, Task, ValidationError,
 )
@@ -17,17 +18,13 @@ from .state import AppState
 from .widgets import OptionalDateEdit, ProgressSpin, color_icon, error_label, show_error
 from .worklog_dialog import confirm_done
 
-NEW_CATEGORY_COLORS = ["#4E79A7", "#F28E2B", "#59A14F", "#B07AA1", "#76B7B2", "#EDC948",
-                       "#E15759", "#FF9DA7", "#3E8E9E", "#6B6ECF"]
-
 
 class CategoryDialog(QDialog):
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
         self.setWindowTitle("カテゴリの追加")
         self.state = state
-        used = set(state.category_colors.values())
-        self.color = next((c for c in NEW_CATEGORY_COLORS if c not in used), NEW_CATEGORY_COLORS[0])
+        self.color = next_category_color(set(state.category_colors.values()))
         self.name = QLineEdit()
         self.color_btn = QPushButton()
         self.color_btn.clicked.connect(self._pick)

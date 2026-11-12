@@ -4,10 +4,10 @@ from __future__ import annotations
 import copy
 import datetime as _dt
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton,
+    QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QSlider,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -15,6 +15,7 @@ from ..core.models import PRIORITIES, STATUS_NOT_STARTED, STATUSES, TASK_NAME_MA
 from .state import AppState
 from .task_dialog import TaskDialog
 from .widgets import color_icon
+from .worklog_dialog import confirm_done
 
 OVERDUE_PLANNED = QColor("#E67E22")  # 完了予定日を過ぎた未完了タスク（橙）
 OVERDUE_DEADLINE = QColor("#D32F2F")  # 期限を過ぎた未完了タスク（赤）
@@ -40,6 +41,49 @@ def _date_item(d: _dt.date | None) -> SortItem:
     it = SortItem(d.isoformat() if d else "")
     it.setData(Qt.UserRole, d.isoformat() if d else "9999-12-31")  # 未設定は末尾
     return it
+
+
+class _NoWheelSlider(QSlider):
+    """表をスクロールしているときに誤って値が変わらないよう、ホイールは表へ渡す。"""
+
+    def wheelEvent(self, ev):
+        ev.ignore()
+
+
+class ProgressSlider(QWidget):
+    """進捗率のスライダー（0〜100、5刻み）。つまみを離した時点（キー操作は変更のたび）で確定する。"""
+
+    committed = Signal(str, int)  # タスクid, 進捗率
+
+    def __init__(self, task_id: str, value: int, enabled: bool, parent=None):
+        super().__init__(parent)
+        self.task_id = task_id
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(4, 0, 4, 0)
+        self.slider = _NoWheelSlider(Qt.Horizontal)
+        self.slider.setRange(0, 20)  # 1目盛り = 5%
+        self.slider.setPageStep(2)
+        self.slider.setValue(value // 5)
+        self.slider.setEnabled(enabled)
+        self.slider.setToolTip("進捗率（5%刻み）")
+        self.label = QLabel(f"{value}%")
+        self.label.setMinimumWidth(36)
+        self.label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        lay.addWidget(self.slider, 1)
+        lay.addWidget(self.label)
+        self.slider.valueChanged.connect(self._changed)
+        self.slider.sliderReleased.connect(self._commit)
+
+    def value(self) -> int:
+        return self.slider.value() * 5
+
+    def _changed(self, _v: int) -> None:
+        self.label.setText(f"{self.value()}%")
+        if not self.slider.isSliderDown():
+            self._commit()
+
+    def _commit(self) -> None:
+        self.committed.emit(self.task_id, self.value())
 
 
 def duplicate_of(task: Task) -> Task:
@@ -85,6 +129,8 @@ class TaskListTab(QWidget):
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(1, QHeaderView.Stretch)
+        hh.setSectionResizeMode(len(COLUMNS) - 1, QHeaderView.Fixed)
+        self.table.setColumnWidth(len(COLUMNS) - 1, 170)
         legend = QLabel("<span style='color:#E67E22'>■</span> 完了予定日を過ぎた未完了タスク　"
                         "<span style='color:#D32F2F'>■</span> 期限を過ぎた未完了タスク　"
                         "見出しをクリックすると並べ替え")
@@ -173,12 +219,15 @@ class TaskListTab(QWidget):
             est = SortItem("" if t.estimate_hours is None else f"{t.estimate_hours:g} h")
             est.setData(Qt.UserRole, t.estimate_hours if t.estimate_hours is not None else -1.0)
             cells.append(est)
-            prog = SortItem(f"{t.progress}%")
+            prog = SortItem("")
             prog.setData(Qt.UserRole, t.progress)
             cells.append(prog)
             for c, item in enumerate(cells):
                 item.setData(Qt.UserRole + 1, t.id)
                 self.table.setItem(r, c, item)
+            slider = ProgressSlider(t.id, t.progress, not self.state.readonly)
+            slider.committed.connect(self.set_progress)
+            self.table.setCellWidget(r, len(COLUMNS) - 1, slider)
         self.table.setSortingEnabled(True)
         self.count_label.setText(f"{len(tasks)} 件 / 全 {len(self.state.repo.tasks)} 件")
         if selected:
@@ -208,6 +257,19 @@ class TaskListTab(QWidget):
         super().keyPressEvent(ev)
 
     # --- 操作 ---
+    def set_progress(self, task_id: str, value: int) -> None:
+        """スライダーで進捗率を変更（F-03）。変更した日の履歴に記録し、100なら完了にするか確認する。"""
+        if self.state.readonly or self.state.repo.get_task(task_id).progress == value:
+            return
+        try:
+            self.state.repo.set_progress(task_id, value, self.state.today())
+        except OSError as e:
+            QMessageBox.critical(self, "Worklog Canvas", f"保存できませんでした: {e}")
+            return
+        confirm_done(self, self.state, task_id)
+        # スライダー自身の処理が終わってから表を作り直す
+        QTimer.singleShot(0, self.state.tasks_changed.emit)
+
     def add_task(self) -> None:
         dlg = TaskDialog(self.state, None, self)
         if dlg.exec() and dlg.saved:

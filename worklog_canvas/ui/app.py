@@ -16,6 +16,7 @@ from ..core import storage
 from ..core.repository import DataFolder
 from ..core.settings import Settings
 from .state import AppState
+from .summary_tab import SummaryTab
 from .task_list_tab import TaskListTab
 from .timeline_view import TimelineTab
 
@@ -43,7 +44,8 @@ class MainWindow(QMainWindow):
         self.task_list = TaskListTab(state)
         self.tabs.addTab(self.timeline, "タイムライン")
         self.tabs.addTab(self.task_list, "タスク一覧")
-        self.tabs.addTab(_placeholder("集計・週報は次のバージョン（M3・M4）で追加します"), "集計・週報")
+        self.summary = SummaryTab(state)
+        self.tabs.addTab(self.summary, "集計・週報")
         self.tabs.addTab(_placeholder("チーム一覧は次のバージョン（M5）で追加します"), "チーム")
         self.setCentralWidget(self.tabs)
 
