@@ -208,6 +208,23 @@ class UserRepository:
         self.save_tasks()
         return task
 
+    def add_tasks(self, tasks: list[Task]) -> list[Task]:
+        """複数のタスクをまとめて追加する（保存は1回）。1件でも不正なら何も追加しない。"""
+        self._check_writable()
+        added = []
+        n = self._next_task
+        for t in tasks:
+            t = replace(t, id=f"T-{n:04d}")
+            t.validate()
+            added.append(t)
+            n += 1
+        if not added:
+            return []
+        self.tasks.extend(added)
+        self._next_task = n
+        self.save_tasks()
+        return added
+
     def update_task(self, task: Task) -> None:
         """同じ id のタスクを置き換える（id は変更不可）。"""
         self._check_writable()

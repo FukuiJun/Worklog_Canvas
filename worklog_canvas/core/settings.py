@@ -29,6 +29,8 @@ class Settings:
     view_end: str = DEFAULT_VIEW_END
     view_mode: str = "week"  # "day" / "week"
     ics_path: str | None = None  # M6
+    report_dir: str | None = None  # 週報を最後に保存したフォルダ
+    csv_dir: str | None = None  # CSVを最後に選んだフォルダ
 
     @property
     def view_range(self) -> tuple[int, int]:

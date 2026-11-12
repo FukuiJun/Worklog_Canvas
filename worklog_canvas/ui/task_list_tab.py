@@ -3,14 +3,16 @@ from __future__ import annotations
 
 import copy
 import datetime as _dt
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QSlider,
+    QAbstractItemView, QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QSlider,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from ..core import csv_import
 from ..core.models import PRIORITIES, STATUS_NOT_STARTED, STATUSES, TASK_NAME_MAX, Task
 from .state import AppState
 from .task_dialog import TaskDialog
@@ -104,7 +106,9 @@ class TaskListTab(QWidget):
         self.btn_edit = QPushButton("編集")
         self.btn_dup = QPushButton("複製")
         self.btn_del = QPushButton("削除")
-        for b in (self.btn_add, self.btn_edit, self.btn_dup, self.btn_del):
+        self.btn_csv = QPushButton("CSVから取り込む…")
+        self.btn_csv.setToolTip("列: タスク名,カテゴリ,完了予定日,期限（UTF-8 BOM付き または Shift_JIS）")
+        for b in (self.btn_add, self.btn_edit, self.btn_dup, self.btn_del, self.btn_csv):
             bar.addWidget(b)
         bar.addSpacing(20)
         bar.addWidget(QLabel("カテゴリ"))
@@ -145,6 +149,7 @@ class TaskListTab(QWidget):
         self.btn_edit.clicked.connect(self.edit_selected)
         self.btn_dup.clicked.connect(self.duplicate_selected)
         self.btn_del.clicked.connect(self.delete_selected)
+        self.btn_csv.clicked.connect(self.import_csv)
         self.table.cellDoubleClicked.connect(lambda r, c: self.edit_selected())
         self.f_category.currentIndexChanged.connect(self.refresh)
         self.f_status.currentIndexChanged.connect(self.refresh)
@@ -249,6 +254,7 @@ class TaskListTab(QWidget):
         for b in (self.btn_edit, self.btn_dup, self.btn_del):
             b.setEnabled(has)
         self.btn_add.setEnabled(not self.state.readonly)
+        self.btn_csv.setEnabled(not self.state.readonly)
 
     def keyPressEvent(self, ev):
         if ev.key() == Qt.Key_Delete:
@@ -269,6 +275,33 @@ class TaskListTab(QWidget):
         confirm_done(self, self.state, task_id)
         # スライダー自身の処理が終わってから表を作り直す
         QTimer.singleShot(0, self.state.tasks_changed.emit)
+
+    def import_csv(self, path: str | None = None) -> None:
+        """タスク取り込み用CSVから一括追加する（F-01）。"""
+        if self.state.readonly:
+            return
+        if not path:
+            start = self.state.settings.csv_dir or str(Path.home())
+            path, _ = QFileDialog.getOpenFileName(self, "タスクを取り込むCSVを選ぶ", start, "CSV ファイル (*.csv);;すべて (*)")
+            if not path:
+                return
+        try:
+            result = csv_import.import_csv(path, self.state.folder, self.state.repo)
+        except csv_import.CsvFormatError as e:
+            QMessageBox.warning(self, "CSVの取り込み", f"取り込めませんでした。\n{e}")
+            return
+        except OSError as e:
+            QMessageBox.critical(self, "CSVの取り込み", f"取り込めませんでした。\n{e}")
+            return
+        self.state.settings.csv_dir = str(Path(path).parent)
+        try:
+            self.state.settings.save()
+        except OSError:
+            pass
+        if result.new_categories:
+            self.state.reload_categories()
+        self.state.tasks_changed.emit()
+        QMessageBox.information(self, "CSVの取り込み", result.message())
 
     def add_task(self) -> None:
         dlg = TaskDialog(self.state, None, self)

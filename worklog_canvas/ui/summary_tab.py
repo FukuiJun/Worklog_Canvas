@@ -14,6 +14,7 @@ from ..core import aggregate as ag
 from ..core import colors
 from ..core import timeutil as tu
 from .charts import DailyStackChart, Legend, ProgressMeter, TaskBarChart
+from .report_page import ReportPage
 from .state import AppState
 from .widgets import color_icon
 
@@ -331,8 +332,6 @@ class SummaryTab(QTabWidget):
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
         self.summary = SummaryPage(state)
+        self.report = ReportPage(state)
         self.addTab(self.summary, "集計")
-        placeholder = QLabel("週報は次のバージョン（M4）で追加します")
-        placeholder.setAlignment(Qt.AlignCenter)
-        placeholder.setStyleSheet("color:#777; font-size: 14px;")
-        self.addTab(placeholder, "週報")
+        self.addTab(self.report, "週報")
