@@ -29,6 +29,7 @@ SOURCES = (SOURCE_MANUAL, SOURCE_OUTLOOK)
 
 TASK_NAME_MAX = 100
 ONEOFF_TITLE_MAX = 50
+MAX_SUBTASKS = 3  # 1つの作業バーに付けられるサブタスクの数（メインと合わせて4つ）
 WEEKLY_NOTE_MAX = 400
 PROGRESS_STEP = 5
 ESTIMATE_STEP = 0.25
@@ -179,17 +180,54 @@ class Task:
 
 
 # --- 作業バー ---------------------------------------------------------------
+def _validate_item(kind: str, task_id: str | None, title: str, label: str) -> None:
+    """メイン・サブタスク共通: 種別とタスクid／タイトルの検証。"""
+    if kind not in KINDS:
+        raise ValidationError(f"{label}種別", f"種別が不正です: {kind}")
+    if kind == KIND_TASK and not task_id:
+        raise ValidationError(f"{label}タスク", "タスクを選んでください")
+    if kind == KIND_ONEOFF:
+        if not title or not title.strip():
+            raise ValidationError(f"{label}タイトル", "タイトルを入力してください")
+        if len(title) > ONEOFF_TITLE_MAX:
+            raise ValidationError(f"{label}タイトル", f"タイトルは{ONEOFF_TITLE_MAX}文字以内で入力してください")
+
+
+@dataclass
+class SubItem:
+    """作業バーのサブタスク（並行して取り組んだタスクまたは単発作業）。"""
+    kind: str = KIND_TASK
+    task_id: str | None = None
+    title: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "種別": self.kind,
+            "タスクid": self.task_id if self.kind == KIND_TASK else None,
+            "タイトル": self.title if self.kind == KIND_ONEOFF else "",
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "SubItem":
+        return cls(kind=d.get("種別", KIND_TASK), task_id=d.get("タスクid"), title=d.get("タイトル") or "")
+
+
 @dataclass
 class Worklog:
+    """作業バー。メインタスク（またはメインの単発作業）1つと、サブタスク0〜3つを持つ。
+
+    作業バー同士は重ならない。並行作業はサブタスクで記録する。
+    """
     id: str
     date: _dt.date
     start: int  # 0:00 からの経過分
     end: int
-    kind: str = KIND_TASK
-    task_id: str | None = None
-    title: str = ""
+    kind: str = KIND_TASK  # メインの種別
+    task_id: str | None = None  # メインのタスクid
+    title: str = ""  # メインが単発作業のときのタイトル
     memo: str = ""
     source: str = SOURCE_MANUAL
+    subs: list[SubItem] = field(default_factory=list)
 
     @property
     def duration(self) -> int:
@@ -203,17 +241,25 @@ class Worklog:
             raise ValidationError("時刻", "終了時刻は開始時刻より後にしてください")
         if self.duration < tu.MIN_DURATION_MINUTES:
             raise ValidationError("時刻", "作業バーは15分以上にしてください")
-        if self.kind not in KINDS:
-            raise ValidationError("種別", f"種別が不正です: {self.kind}")
         if self.source not in SOURCES:
             raise ValidationError("取込元", f"取込元が不正です: {self.source}")
-        if self.kind == KIND_TASK and not self.task_id:
-            raise ValidationError("タスク", "タスクを選んでください")
-        if self.kind == KIND_ONEOFF:
-            if not self.title or not self.title.strip():
-                raise ValidationError("タイトル", "タイトルを入力してください")
-            if len(self.title) > ONEOFF_TITLE_MAX:
-                raise ValidationError("タイトル", f"タイトルは{ONEOFF_TITLE_MAX}文字以内で入力してください")
+        _validate_item(self.kind, self.task_id, self.title, "")
+        if len(self.subs) > MAX_SUBTASKS:
+            raise ValidationError("サブタスク", f"サブタスクは{MAX_SUBTASKS}つまでです")
+        seen = {self.task_id} if self.kind == KIND_TASK else set()
+        for sub in self.subs:
+            _validate_item(sub.kind, sub.task_id, sub.title, "サブタスクの")
+            if sub.kind == KIND_TASK:
+                if sub.task_id in seen:
+                    raise ValidationError("サブタスク", "同じタスクを重ねて選ぶことはできません")
+                seen.add(sub.task_id)
+
+    def task_ids(self) -> set[str]:
+        """メイン・サブで参照しているタスクid。"""
+        ids = {s.task_id for s in self.subs if s.kind == KIND_TASK}
+        if self.kind == KIND_TASK:
+            ids.add(self.task_id)
+        return ids
 
     def to_dict(self) -> dict:
         return {
@@ -224,6 +270,7 @@ class Worklog:
             "種別": self.kind,
             "タスクid": self.task_id if self.kind == KIND_TASK else None,
             "タイトル": self.title if self.kind == KIND_ONEOFF else "",
+            "サブタスク": [s.to_dict() for s in self.subs],
             "メモ": self.memo,
             "取込元": self.source,
         }
@@ -240,6 +287,7 @@ class Worklog:
             title=d.get("タイトル") or "",
             memo=d.get("メモ") or "",
             source=d.get("取込元", SOURCE_MANUAL),
+            subs=[SubItem.from_dict(x) for x in d.get("サブタスク", [])],
         )
 
 

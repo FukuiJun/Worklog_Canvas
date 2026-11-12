@@ -19,7 +19,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Iterable
 
-from . import layout, storage
+from . import overlap, storage
 from .models import (
     KIND_ONEOFF,
     KIND_TASK,
@@ -221,20 +221,25 @@ class UserRepository:
         self.save_tasks()
 
     def linked_worklogs(self, task_id: str) -> list[Worklog]:
-        return [w for w in self.worklogs if w.kind == KIND_TASK and w.task_id == task_id]
+        """メインまたはサブタスクとしてそのタスクを含む作業バー。"""
+        return [w for w in self.worklogs if task_id in w.task_ids()]
 
     def delete_task(self, task_id: str) -> int:
-        """タスクを削除する。紐づく作業バーは単発作業に変え、タイトルに元のタスク名を入れる。
+        """タスクを削除する。紐づく作業バーのメイン・サブタスクは単発作業に変え、
+        タイトルに元のタスク名を入れる。
 
         確認ダイアログは画面側で linked_worklogs() を見て出す。変換した作業バー数を返す。
         """
         self._check_writable()
         task = self.get_task(task_id)
+        title = task.name[:ONEOFF_TITLE_MAX]
         linked = self.linked_worklogs(task_id)
         for w in linked:
-            w.kind = KIND_ONEOFF
-            w.task_id = None
-            w.title = task.name[:ONEOFF_TITLE_MAX]
+            if w.kind == KIND_TASK and w.task_id == task_id:
+                w.kind, w.task_id, w.title = KIND_ONEOFF, None, title
+            for sub in w.subs:
+                if sub.kind == KIND_TASK and sub.task_id == task_id:
+                    sub.kind, sub.task_id, sub.title = KIND_ONEOFF, None, title
         if linked:
             self.save_worklogs()  # 先に作業バーを保存（途中で落ちても参照切れにならない）
         self.tasks = [t for t in self.tasks if t.id != task_id]
@@ -272,13 +277,13 @@ class UserRepository:
 
     def _validate_worklog(self, w: Worklog, exclude_id: str | None = None) -> None:
         w.validate()
-        if w.kind == KIND_TASK:
-            self.get_task(w.task_id)  # 存在しないタスクは KeyError
-        same_day = [(x.start, x.end) for x in self.worklogs if x.date == w.date and x.id != exclude_id]
-        layout.check_overlap_limit(same_day + [(w.start, w.end)])
+        for task_id in w.task_ids():
+            self.get_task(task_id)  # 存在しないタスクは KeyError
+        same_day = [(x.id, x.start, x.end) for x in self.worklogs if x.date == w.date and x.id != exclude_id]
+        overlap.check_no_overlap(w.start, w.end, same_day)
 
     def add_worklog(self, w: Worklog) -> Worklog:
-        """w.id は無視して自動採番する。5つ以上の重なりは TooManyOverlapsError。"""
+        """w.id は無視して自動採番する。既存の作業バーと重なる場合は OverlapError。"""
         self._check_writable()
         w = replace(w, id=f"W-{self._next_worklog:06d}")
         self._validate_worklog(w)

@@ -1,7 +1,13 @@
 """集計（F-04）。時間はすべて「分」の整数で計算し、表示時に時間へ換算する。
 
-- タスク別時間: そのタスクの作業バーの長さの合計。並行作業でも各タスクに全時間を計上する。
+- タスク別時間（メイン時間）: そのタスクがメインの作業バーの長さの合計。
+- サブ時間: そのタスクがサブタスクになっている作業バーの長さの合計。メイン時間とは別に集計する。
 - 稼働時間: その日に作業バーが1つ以上ある時間帯の長さ（重なりは1回だけ数える）。
+  作業バーは重ならないので、メイン時間と単発作業（メイン）の合計に一致する。
+- カテゴリ別時間と割合はメインだけで数える（割合の合計は100%）。
+
+例: 10:00〜12:00 にメイン=タスクA、サブ=タスクB
+    → タスクAのメイン時間 2.0h、タスクBのサブ時間 2.0h、稼働時間 2.0h
 """
 from __future__ import annotations
 
@@ -60,14 +66,27 @@ def minutes_by_task(worklogs: Iterable[Worklog]) -> dict[str, int]:
 
 
 def oneoff_minutes(worklogs: Iterable[Worklog]) -> int:
+    """メインが単発作業の作業バーの合計分。"""
     return sum(w.duration for w in worklogs if w.kind == KIND_ONEOFF)
 
 
-def minutes_by_category(worklogs: Iterable[Worklog], tasks: Iterable[Task]) -> dict[str, int]:
-    """カテゴリ名 → 合計分。単発作業は「単発作業」、カテゴリ未設定は「（未分類）」。
+def sub_minutes_by_task(worklogs: Iterable[Worklog]) -> dict[str, int]:
+    """タスクid → サブ時間（分）。作業バーの全時間を計上する。"""
+    out: dict[str, int] = defaultdict(int)
+    for w in worklogs:
+        for sub in w.subs:
+            if sub.kind == KIND_TASK:
+                out[sub.task_id] += w.duration
+    return dict(out)
 
-    並行作業は各作業バーの全時間を計上するため、合計は稼働時間を超えることがある。
-    """
+
+def sub_oneoff_minutes(worklogs: Iterable[Worklog]) -> int:
+    """サブタスクとして記録した単発作業の合計分（サブ1件ごとに作業バーの全時間）。"""
+    return sum(w.duration for w in worklogs for sub in w.subs if sub.kind == KIND_ONEOFF)
+
+
+def minutes_by_category(worklogs: Iterable[Worklog], tasks: Iterable[Task]) -> dict[str, int]:
+    """カテゴリ名 → 合計分（メインのみ）。単発作業は「単発作業」、カテゴリ未設定は「（未分類）」。"""
     cat = {t.id: (t.category or UNCATEGORIZED_LABEL) for t in tasks}
     out: dict[str, int] = defaultdict(int)
     for w in worklogs:
@@ -82,9 +101,11 @@ def minutes_by_category(worklogs: Iterable[Worklog], tasks: Iterable[Task]) -> d
 class DaySummary:
     date: _dt.date
     working: int = 0  # 稼働時間（分）
-    by_task: dict[str, int] = field(default_factory=dict)  # タスクid → 分
-    oneoff: int = 0  # 単発作業の合計（分）
+    by_task: dict[str, int] = field(default_factory=dict)  # タスクid → メイン時間（分）
+    oneoff: int = 0  # 単発作業（メイン）の合計（分）
     by_category: dict[str, int] = field(default_factory=dict)
+    sub_by_task: dict[str, int] = field(default_factory=dict)  # タスクid → サブ時間（分）
+    sub_oneoff: int = 0  # 単発作業（サブ）の合計（分）
 
     @property
     def is_empty(self) -> bool:
@@ -107,6 +128,8 @@ def daily_summary(worklogs: Iterable[Worklog], tasks: Iterable[Task],
             by_task=minutes_by_task(ws),
             oneoff=oneoff_minutes(ws),
             by_category=minutes_by_category(ws, tasks),
+            sub_by_task=sub_minutes_by_task(ws),
+            sub_oneoff=sub_oneoff_minutes(ws),
         ))
     return out
 
@@ -120,6 +143,8 @@ class PeriodSummary:
     oneoff: int
     by_category: dict[str, int]
     count: int  # 作業バー件数
+    sub_by_task: dict[str, int] = field(default_factory=dict)
+    sub_oneoff: int = 0
 
     @property
     def is_empty(self) -> bool:
@@ -127,7 +152,7 @@ class PeriodSummary:
         return self.count == 0
 
     def task_ranking(self) -> list[tuple[str, int]]:
-        """週別の横棒グラフ用: (タスクid または「単発作業」, 分) を降順で。"""
+        """週別の横棒グラフ用: (タスクid または「単発作業」, メイン時間の分) を降順で。"""
         rows = list(self.by_task.items())
         if self.oneoff:
             rows.append((ONEOFF_LABEL, self.oneoff))
@@ -151,13 +176,22 @@ def period_summary(worklogs: Iterable[Worklog], tasks: Iterable[Task],
         oneoff=oneoff_minutes(ws),
         by_category=minutes_by_category(ws, list(tasks)),
         count=len(ws),
+        sub_by_task=sub_minutes_by_task(ws),
+        sub_oneoff=sub_oneoff_minutes(ws),
     )
 
 
 def task_actual_minutes(worklogs: Iterable[Worklog], task_id: str, until: _dt.date | None = None) -> int:
-    """タスクの実績時間（累計）。until を指定するとその日まで。"""
+    """タスクの実績時間（メイン時間の累計）。予定工数との比較に使う。until を指定するとその日まで。"""
     return sum(w.duration for w in worklogs
                if w.kind == KIND_TASK and w.task_id == task_id and (until is None or w.date <= until))
+
+
+def task_sub_minutes(worklogs: Iterable[Worklog], task_id: str, until: _dt.date | None = None) -> int:
+    """タスクのサブ時間の累計。"""
+    return sum(w.duration for w in worklogs
+               if (until is None or w.date <= until)
+               and any(s.kind == KIND_TASK and s.task_id == task_id for s in w.subs))
 
 
 def progress_on(task: Task, day: _dt.date) -> int:

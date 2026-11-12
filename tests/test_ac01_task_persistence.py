@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from worklog_canvas.core.models import KIND_ONEOFF, KIND_TASK, Task, ValidationError, Worklog
+from worklog_canvas.core.models import KIND_ONEOFF, KIND_TASK, SubItem, Task, ValidationError, Worklog
 from worklog_canvas.core.repository import DataFolder
 
 
@@ -74,3 +74,18 @@ def test_ac01_delete_task_converts_worklogs_to_oneoff(data_folder):
     assert conv.kind == KIND_ONEOFF and conv.title == "消すタスク" and conv.task_id is None
     assert again.get_worklog(w2.id).kind == KIND_TASK
     assert [x.id for x in again.tasks] == [other.id]
+
+
+def test_ac01_delete_task_converts_subtasks_to_oneoff(data_folder):
+    repo = data_folder.user("fukui")
+    main = repo.add_task(Task(id="", name="メイン"))
+    gone = repo.add_task(Task(id="", name="サブで使っていたタスク"))
+    w = repo.add_worklog(Worklog("", dt.date(2026, 11, 9), 600, 720, task_id=main.id,
+                                 subs=[SubItem(KIND_TASK, gone.id)]))
+    assert [x.id for x in repo.linked_worklogs(gone.id)] == [w.id]
+    assert repo.delete_task(gone.id) == 1
+
+    conv = _restart(data_folder).get_worklog(w.id)
+    assert conv.kind == KIND_TASK and conv.task_id == main.id
+    assert [s.to_dict() for s in conv.subs] == [
+        {"種別": "単発作業", "タスクid": None, "タイトル": "サブで使っていたタスク"}]
