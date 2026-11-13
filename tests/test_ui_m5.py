@@ -241,3 +241,17 @@ def test_connect_folder_retry_then_quit(tmp_path, monkeypatch):
 
     monkeypatch.setattr(app_mod, "QMessageBox", FakeBox)
     assert app_mod.connect_folder(Settings(), str(tmp_path / "ない")) is None
+
+
+def test_broken_categories_restored_at_startup(sample_folder):
+    backup.make_daily_backup(sample_folder, "fukui", dt.date(2026, 11, 11))
+    sample_folder.categories_path.write_text("{", encoding="utf-8")
+    load_own(sample_folder, "fukui", readonly=False, ask=lambda *a: True)
+    assert "治具" in sample_folder.category_colors()
+
+
+def test_broken_categories_during_use_keeps_colors(win, sample_folder):
+    before = dict(win.state.category_colors)
+    sample_folder.categories_path.write_text("{", encoding="utf-8")
+    win.btn_refresh.click()
+    assert win.state.category_colors == before

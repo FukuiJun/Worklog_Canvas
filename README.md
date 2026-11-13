@@ -1,8 +1,30 @@
 # Worklog Canvas
 
-タスク一覧と、1日の作業時間を記録する作業バーを管理し、タスク別の作業時間と進捗を可視化するWindows用デスクトップアプリ。仕様は [SPEC.md](SPEC.md) を参照。
+タスク一覧と、1日の作業時間を記録する作業バーを管理し、タスク別の作業時間と進捗を可視化するWindows用デスクトップアプリ。
+記録から週報（Excel）を出力し、チームのメンバーの記録を閲覧できる。仕様は [SPEC.md](SPEC.md) を参照。
 
-> 開発中（M6: 予定表ファイル（.ics）の取り込みまで実装済み）。exe化と性能確認は M7 で追記する。
+- 動作環境: Windows 11。インターネット接続は不要（通信は一切行わない）
+- データは共有フォルダに保存する。利用者はWindowsのユーザー名で識別する
+
+## 起動方法（利用者向け）
+
+1. 配布された `WorklogCanvas` フォルダを、自分のPCの任意の場所（例: `C:\Tools\WorklogCanvas`）にコピーする。Pythonのインストールは不要。
+2. フォルダ内の `WorklogCanvas.exe` をダブルクリックする。
+3. 初回だけ、データを保存するフォルダ（チームの共有フォルダ）を選ぶ。選んだ場所は `%APPDATA%\WorklogCanvas\settings.json` に保存され、次回からは聞かれない。あとから「設定…」で変更できる。
+4. 「設定…」で表示名（例: 福井）を設定する。チーム一覧や週報にはこの名前が出る。
+
+## exe の作り方（開発者向け）
+
+Windows で、Python 3.12 を入れた状態で、このフォルダの `build.bat` を実行する。
+
+```bat
+build.bat
+```
+
+1. ビルド用の仮想環境 `.venv-build` を作り、`requirements.txt` のライブラリを入れる。
+2. 自動テストを実行する（省略するときは `build.bat /notest`）。
+3. PyInstaller で `dist\WorklogCanvas\WorklogCanvas.exe` を作る（1フォルダ形式。`dist\WorklogCanvas` フォルダごと配布する）。
+4. できた exe を `--self-test` で起動し、同梱した部品（画面、Excel出力、予定表ファイル、タイムゾーン）が動くことを確かめる。結果は `%APPDATA%\WorklogCanvas\selftest.txt`。
 
 ## 開発環境
 
@@ -12,23 +34,17 @@
 py -3.12 -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-## 起動
-
-```bat
 python -m worklog_canvas
 ```
 
-初回起動時にデータフォルダを選ぶ（選んだフォルダは `%APPDATA%\WorklogCanvas\settings.json` に保存）。
-利用者はWindowsのユーザー名で識別する。
-
-確認用に、データフォルダとユーザー名を指定して起動できる。サンプルデータは書き換わるので、コピーして使う。
+確認用に、データフォルダとユーザー名を指定して起動できる（exe でも同じ指定ができる）。サンプルデータは書き換わるので、コピーして使う。
 
 ```bat
 xcopy /E /I sample_data %TEMP%\wc_sample
 python -m worklog_canvas --data %TEMP%\wc_sample --user fukui
 ```
+
+## 使い方
 
 ### タイムラインの操作
 
@@ -127,6 +143,18 @@ python -m pytest
 データ処理（`worklog_canvas/core/`）は画面に依存せず、PySide6 なしでテストできる。
 画面のテスト（`tests/test_ui_*.py`）は画面を表示せずに（offscreen で）動く。PySide6 が無い環境では自動でスキップする。
 
+## 性能の確認（仕様8章、AC-22）
+
+タスク500件・作業バー5000件（×10名）と予定2000件の予定表ファイルを作り、画面を実際に動かして時間を測る。
+
+```bat
+python scripts\make_perf_data.py %TEMP%\wc_perf
+python scripts\measure_perf.py %TEMP%\wc_perf
+```
+
+基準（起動から操作可能まで5秒、週の切り替え1秒、チーム一覧10名分5秒、予定2000件の読み込み3秒）を超えた項目は「NG」と表示する。
+exe での体感の確認は、作ったデータフォルダを指定して起動する（`WorklogCanvas.exe --data %TEMP%\wc_perf --user user01`）。
+
 ## ソースの構成
 
 | パス | 内容 |
@@ -134,7 +162,6 @@ python -m pytest
 | `worklog_canvas/core/models.py` | タスク・作業バー・週次メモ・カテゴリのデータ定義と入力検証 |
 | `worklog_canvas/core/timeutil.py` | 時刻の変換、15分吸着 |
 | `worklog_canvas/core/overlap.py` | 作業バーの重なり判定（作業バー同士は重ねられない） |
-| `worklog_canvas/core/colors.py` | 作業バーの表示色 |
 | `worklog_canvas/core/aggregate.py` | 集計（メイン時間・サブ時間、稼働時間、カテゴリ別） |
 | `worklog_canvas/core/storage.py` | JSONの読み書き（一時ファイル経由の安全な保存） |
 | `worklog_canvas/core/repository.py` | データフォルダと利用者ごとのデータの操作 |
@@ -150,7 +177,11 @@ python -m pytest
 | `worklog_canvas/core/applog.py` | ログ |
 | `worklog_canvas/core/ics.py` | 予定表ファイル（.ics）の読み込みと繰り返しの展開 |
 | `worklog_canvas/ui/` | 画面（PySide6） |
+| `worklog_canvas/selftest.py` | exe の動作確認（`--self-test`） |
+| `packaging/WorklogCanvas.py` | exe の入口（PyInstaller） |
+| `build.bat` | exe を作るバッチファイル |
 | `scripts/make_sample_data.py` | サンプルデータの生成 |
+| `scripts/make_perf_data.py` / `scripts/measure_perf.py` | 性能確認用データの生成と計測 |
 | `sample_data/` | サンプルデータ（3名分） |
 
 ## データフォルダの構成

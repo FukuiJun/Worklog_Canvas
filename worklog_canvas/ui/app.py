@@ -312,7 +312,9 @@ def load_own(folder: DataFolder, username: str, readonly: bool, ask=None) -> Use
     ask = ask or _ask_restore
     for _ in range(10):  # 壊れたファイルが複数あっても順に処理する
         try:
-            return folder.user(username, readonly=readonly)
+            repo = folder.user(username, readonly=readonly)
+            folder.load_categories()  # 共有の categories.json も確かめる
+            return repo
         except storage.JsonFormatError as e:
             path = e.path
             log.error("JSONが壊れていて読めません: %s", path)
@@ -353,7 +355,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="WorklogCanvas")
     parser.add_argument("--data", help="データフォルダ（設定より優先。開発・確認用）")
     parser.add_argument("--user", help="ユーザー名（既定はWindowsのユーザー名。開発・確認用）")
+    parser.add_argument("--self-test", action="store_true",
+                        help="exe の動作確認: 部品の読み込みと画面の作成を一時フォルダで試して終了する")
     args, qt_args = parser.parse_known_args(argv if argv is not None else sys.argv[1:])
+    if args.self_test:
+        from .. import selftest
+        return selftest.run()
 
     applog.setup(app_dir())
     log.info("起動")

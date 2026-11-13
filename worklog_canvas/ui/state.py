@@ -58,7 +58,13 @@ class AppState(QObject):
         self.worklogs_changed.emit()
 
     def reload_categories(self) -> None:
-        self.category_colors = self.folder.category_colors()
+        """categories.json を読み直す。読めなければ（他の人が保存中に壊れた等）前の色のまま知らせる。"""
+        from ..core.storage import JsonFormatError
+        try:
+            self.category_colors = self.folder.category_colors()
+        except (JsonFormatError, OSError) as e:
+            self.error.emit(f"カテゴリ（categories.json）を読み込めませんでした: {e}")
+            return
         self.categories_changed.emit()
 
     def tasks_by_id(self) -> dict[str, Task]:
