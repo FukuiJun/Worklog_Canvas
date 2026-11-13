@@ -30,18 +30,24 @@ exe を作る手順の本体は `packaging/build_exe.py`（`build.bat` と GitHu
 
 ## リリースの作り方（GitHub Releases に自動で添付）
 
-`v1.2.0` のような形のタグをプッシュすると、GitHub Actions（`.github/workflows/release.yml`）が Windows 上で次を行う。
+`v1.2.0` のような形のタグで Release を作ると、GitHub Actions（`.github/workflows/release.yml`）が Windows 上で次を行う。
 
 1. 自動テスト
 2. 版番号（タグの `v` を除いた `1.2.0`）を入れて exe を作り、`--self-test` で動作を確かめる
-3. `WorklogCanvas-v1.2.0-windows.zip` を添付した Release を作る（リリースノートは前回のタグからの変更を自動で作る）
+3. `WorklogCanvas-v1.2.0-windows.zip` を Release に添付する（10〜20分ほどかかる。進み具合は「Actions」タブで見られる）
+
+タグの作り方はどちらでもよい。
+
+- GitHub の「Releases」→「Draft a new release」で、新しいタグ（例: `v1.2.0`）を `main` に作り、「Publish release」を押す。zip はあとから自動で添付される。
+- コマンドでタグをプッシュする（Release は自動で作られ、リリースノートも前回のタグからの変更で自動で作られる）。
 
 ```bash
 git tag v1.2.0
 git push origin v1.2.0
 ```
 
-- タグは `v数字.数字.数字` の形にする。テストか動作確認に失敗した場合は Release を作らない。
+- タグを付けるコミットに `.github/workflows/release.yml` が入っている必要がある（入っていないコミットのタグでは何も起きない）。
+- タグは `v数字.数字.数字` の形にする。テストか動作確認に失敗した場合は zip を添付しない（「Actions」タブに失敗が表示される）。
 - 利用者は Release の zip を展開し、`WorklogCanvas` フォルダごと置き換える（データは共有フォルダと `%APPDATA%` にあるので消えない）。
 - 版番号は「設定…」画面と `app.log` の起動の行で確認できる。
 - プルリクエストと手動実行（Actions の「Release」→「Run workflow」）でも同じ手順でビルドを確かめる。この場合は Release を作らず、zip を成果物として7日間残す。

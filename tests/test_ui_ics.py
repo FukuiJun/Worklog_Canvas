@@ -148,10 +148,10 @@ def test_drop_ics_file_on_timeline(win, tmp_path):
 
 
 def test_skipped_events_message(win, tmp_path):
-    text = SAMPLE.read_text("utf-8").replace(
+    text = SAMPLE.read_bytes().decode("utf-8").replace(
         "END:VCALENDAR", "BEGIN:VEVENT\r\nUID:bad\r\nDTSTART:2026-99-99\r\nEND:VEVENT\r\nEND:VCALENDAR")
     p = tmp_path / "partial.ics"
-    p.write_text(text, encoding="utf-8")
+    p.write_bytes(text.encode("utf-8"))  # 改行（\r\n）を Windows で変換させない
     assert win.timeline.load_ics(str(p))
     assert win.message.text() == "1件の予定を読み飛ばしました"
     assert len(win.timeline.canvas.appointments) == 5

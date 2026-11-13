@@ -66,7 +66,8 @@ def run() -> int:
                                                  dt.date(2026, 11, 13))
                 weekly_report.write_xlsx(rep, tmp / rep.filename)
                 assert (tmp / rep.filename).stat().st_size > 0
-                (tmp / "a.ics").write_text(ICS, encoding="utf-8")
+                # write_text だと Windows では \r\n が \r\r\n になり、予定表ファイルとして読めなくなる
+                (tmp / "a.ics").write_bytes(ICS.encode("utf-8"))
                 f = ics.IcsFile(tmp / "a.ics", tz=ZoneInfo("Asia/Tokyo"))
                 week = f.week(dt.date(2026, 11, 9))
                 assert [(a.title, a.start.hour) for a in week.appointments] == [("UTC", 10)], week

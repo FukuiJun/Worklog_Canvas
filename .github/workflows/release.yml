@@ -2,22 +2,28 @@
 #
 # - v1.2.0 のようなタグをプッシュ → テスト・exe の作成・動作確認のあと、
 #   WorklogCanvas-v1.2.0-windows.zip を添付した Release を作る（リリースノートは自動生成）
+# - GitHub の Releases 画面で Release を作った（公開した）とき → 同じ手順で作った zip をその Release に添付する
 # - プルリクエスト・手動実行 → 同じ手順でビルドを確かめるだけ（Release は作らない。zip は成果物として7日間保存）
+# ※ タグを付けるコミットに、このファイル（.github/workflows/release.yml）が入っている必要がある
 #
-# 使い方:
-#   git tag v1.2.0
-#   git push origin v1.2.0
+# 使い方（どちらか）:
+#   git tag v1.2.0 && git push origin v1.2.0
+#   GitHub の「Releases」→「Draft a new release」→ タグ v1.2.0 を main に作って「Publish release」
 name: Release
 
 on:
   push:
     tags: ["v*.*.*"]
+  release:
+    types: [published]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write  # Release の作成に必要
 
+# 画面からの Release 作成では「タグのプッシュ」と「Release の公開」の両方で起動しうるので、
+# 同じタグの実行は順番に行い、後の実行は添付済みなら何もしない
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -55,15 +61,33 @@ jobs:
             echo "name=build-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: 添付済みか確かめる（タグのとき）
+        id: done
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          zip="WorklogCanvas-${{ steps.ver.outputs.name }}-windows.zip"
+          if gh release view "${{ steps.ver.outputs.name }}" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$zip"; then
+            echo "$zip は添付済みのため、何もしません"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: ライブラリを入れる
+        if: steps.done.outputs.skip != 'true'
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
       - name: 自動テスト
+        if: steps.done.outputs.skip != 'true'
+        timeout-minutes: 15
         run: python -m pytest -q
 
       - name: exe の作成と動作確認
+        if: steps.done.outputs.skip != 'true'
+        timeout-minutes: 15
         shell: bash
         run: |
           args=(--zip "out/WorklogCanvas-${{ steps.ver.outputs.name }}-windows.zip")
@@ -80,13 +104,18 @@ jobs:
           path: out/*.zip
           retention-days: 7
 
-      - name: Release を作る（タグのとき）
-        if: github.ref_type == 'tag'
+      - name: Release を作る、または既存の Release に添付する（タグのとき）
+        if: github.ref_type == 'tag' && steps.done.outputs.skip != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.ver.outputs.name }}" out/*.zip \
-            --title "Worklog Canvas ${{ steps.ver.outputs.name }}" \
-            --generate-notes \
-            --verify-tag
+          tag="${{ steps.ver.outputs.name }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" out/*.zip --clobber
+          else
+            gh release create "$tag" out/*.zip \
+              --title "Worklog Canvas $tag" \
+              --generate-notes \
+              --verify-tag
+          fi
