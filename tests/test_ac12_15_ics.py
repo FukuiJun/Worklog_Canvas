@@ -92,12 +92,12 @@ def test_missing_file(tmp_path):
 
 
 def test_some_events_unreadable_are_skipped(tmp_path):
-    text = SAMPLE.read_text("utf-8").replace(
+    text = SAMPLE.read_bytes().decode("utf-8").replace(
         "END:VCALENDAR",
         "BEGIN:VEVENT\r\nUID:bad1\r\nSUMMARY:壊れた予定\r\nDTSTART:2026-99-99\r\nEND:VEVENT\r\n"
         "BEGIN:VEVENT\r\nUID:bad2\r\nSUMMARY:開始なし\r\nEND:VEVENT\r\nEND:VCALENDAR")
     p = tmp_path / "partial.ics"
-    p.write_text(text, encoding="utf-8")
+    p.write_bytes(text.encode("utf-8"))  # 改行（\r\n）を Windows で変換させない
     r = ics.IcsFile(p, tz=JST).week(D(2026, 11, 9))
     assert r.skipped == 2 and len(r.appointments) == 5
 
@@ -115,7 +115,7 @@ def test_2000_events_within_3_seconds(tmp_path):
         lines.append("END:VEVENT")
     lines.append("END:VCALENDAR")
     p = tmp_path / "big.ics"
-    p.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+    p.write_bytes(("\r\n".join(lines) + "\r\n").encode("utf-8"))
     t0 = time.perf_counter()
     f = ics.IcsFile(p, tz=JST)
     r = f.week(D(2026, 3, 2))

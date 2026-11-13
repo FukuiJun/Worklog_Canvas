@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QVBoxLayout, QWidget,
 )
 
+from .. import __version__
 from ..core import applog, backup, storage, team
 from ..core.lock import HEARTBEAT_SECONDS, UserLock
 from ..core.repository import DataFolder, UserRepository
@@ -363,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
         return selftest.run()
 
     applog.setup(app_dir())
-    log.info("起動")
+    log.info("起動（バージョン %s）", __version__)
     sys.excepthook = _excepthook
     app = QApplication.instance() or QApplication([sys.argv[0], *qt_args])
     app.setApplicationName(APP_TITLE)

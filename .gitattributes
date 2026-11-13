@@ -1,1 +1,4 @@
+# 改行や文字コードを Git に変換させない（Windows の autocrlf でも中身を変えない）
 *.bat -text
+*.ics -text
+tests/data/* -text
