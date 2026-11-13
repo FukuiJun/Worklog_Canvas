@@ -1,0 +1,92 @@
+# WorklogCanvas.exe を作り、GitHub の Release に添付する。
+#
+# - v1.2.0 のようなタグをプッシュ → テスト・exe の作成・動作確認のあと、
+#   WorklogCanvas-v1.2.0-windows.zip を添付した Release を作る（リリースノートは自動生成）
+# - プルリクエスト・手動実行 → 同じ手順でビルドを確かめるだけ（Release は作らない。zip は成果物として7日間保存）
+#
+# 使い方:
+#   git tag v1.2.0
+#   git push origin v1.2.0
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # Release の作成に必要
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: 版番号を決める
+        id: ver
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::タグは v1.2.3 の形にしてください（$tag）"
+              exit 1
+            fi
+            echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+            echo "name=$tag" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=" >> "$GITHUB_OUTPUT"
+            echo "name=build-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: ライブラリを入れる
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: 自動テスト
+        run: python -m pytest -q
+
+      - name: exe の作成と動作確認
+        shell: bash
+        run: |
+          args=(--zip "out/WorklogCanvas-${{ steps.ver.outputs.name }}-windows.zip")
+          if [[ -n "${{ steps.ver.outputs.version }}" ]]; then
+            args+=(--version "${{ steps.ver.outputs.version }}")
+          fi
+          python packaging/build_exe.py "${args[@]}"
+
+      - name: 成果物として保存（プルリクエスト・手動実行）
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: WorklogCanvas-${{ steps.ver.outputs.name }}-windows
+          path: out/*.zip
+          retention-days: 7
+
+      - name: Release を作る（タグのとき）
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.name }}" out/*.zip \
+            --title "Worklog Canvas ${{ steps.ver.outputs.name }}" \
+            --generate-notes \
+            --verify-tag

@@ -24,7 +24,27 @@ build.bat
 1. ビルド用の仮想環境 `.venv-build` を作り、`requirements.txt` のライブラリを入れる。
 2. 自動テストを実行する（省略するときは `build.bat /notest`）。
 3. PyInstaller で `dist\WorklogCanvas\WorklogCanvas.exe` を作る（1フォルダ形式。`dist\WorklogCanvas` フォルダごと配布する）。
-4. できた exe を `--self-test` で起動し、同梱した部品（画面、Excel出力、予定表ファイル、タイムゾーン）が動くことを確かめる。結果は `%APPDATA%\WorklogCanvas\selftest.txt`。
+4. できた exe を `--self-test` で起動し、同梱した部品（画面、Excel出力、予定表ファイル、タイムゾーン）が動くことを確かめる。
+
+exe を作る手順の本体は `packaging/build_exe.py`（`build.bat` と GitHub Actions の両方から使う）。
+
+## リリースの作り方（GitHub Releases に自動で添付）
+
+`v1.2.0` のような形のタグをプッシュすると、GitHub Actions（`.github/workflows/release.yml`）が Windows 上で次を行う。
+
+1. 自動テスト
+2. 版番号（タグの `v` を除いた `1.2.0`）を入れて exe を作り、`--self-test` で動作を確かめる
+3. `WorklogCanvas-v1.2.0-windows.zip` を添付した Release を作る（リリースノートは前回のタグからの変更を自動で作る）
+
+```bash
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+- タグは `v数字.数字.数字` の形にする。テストか動作確認に失敗した場合は Release を作らない。
+- 利用者は Release の zip を展開し、`WorklogCanvas` フォルダごと置き換える（データは共有フォルダと `%APPDATA%` にあるので消えない）。
+- 版番号は「設定…」画面と `app.log` の起動の行で確認できる。
+- プルリクエストと手動実行（Actions の「Release」→「Run workflow」）でも同じ手順でビルドを確かめる。この場合は Release を作らず、zip を成果物として7日間残す。
 
 ## 開発環境
 
@@ -179,6 +199,8 @@ exe での体感の確認は、作ったデータフォルダを指定して起�
 | `worklog_canvas/ui/` | 画面（PySide6） |
 | `worklog_canvas/selftest.py` | exe の動作確認（`--self-test`） |
 | `packaging/WorklogCanvas.py` | exe の入口（PyInstaller） |
+| `packaging/build_exe.py` | exe の作成・動作確認・zip 化（build.bat と GitHub Actions で共用） |
+| `.github/workflows/release.yml` | タグのプッシュで Release を作る GitHub Actions |
 | `build.bat` | exe を作るバッチファイル |
 | `scripts/make_sample_data.py` | サンプルデータの生成 |
 | `scripts/make_perf_data.py` / `scripts/measure_perf.py` | 性能確認用データの生成と計測 |

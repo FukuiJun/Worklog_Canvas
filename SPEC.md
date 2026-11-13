@@ -244,6 +244,7 @@
 - 自動テスト（pytest）
 - exeビルド用スクリプト `build.bat`（`WorklogCanvas.exe` を生成。テストの実行と、できたexeの動作確認 `--self-test` を含む）
 - 性能確認用のデータ生成スクリプト `scripts/make_perf_data.py` と計測スクリプト `scripts/measure_perf.py`
+- リリースの自動化（`.github/workflows/release.yml`）: `v1.2.3` 形式のタグのプッシュで、Windows上でテスト・exeの作成・動作確認を行い、zip を添付した GitHub Release を作る。版番号はタグから取り、設定画面とログに表示する
 - サンプルデータ（1人あたりタスク8件、作業バー2週間分、並行作業（サブタスク）と単発作業を含む。3名分。サンプルICSファイル1つ）
 
 ## 11. 受け入れ基準

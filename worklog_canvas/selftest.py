@@ -94,7 +94,9 @@ def run() -> int:
     except Exception:  # noqa: BLE001
         lines.append("NG\n" + traceback.format_exc())
         code = 1
-    text = "Worklog Canvas 動作確認: " + ("成功" if code == 0 else "失敗") + "\n" + "\n".join(lines) + "\n"
+    from . import __version__
+    text = (f"Worklog Canvas {__version__} 動作確認: " + ("成功" if code == 0 else "失敗") + "\n"
+            + "\n".join(lines) + "\n")
     try:
         out = st.app_dir()
         out.mkdir(parents=True, exist_ok=True)

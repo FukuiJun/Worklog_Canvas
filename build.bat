@@ -5,6 +5,8 @@ rem    build.bat          テストを実行してから exe を作る
 rem    build.bat /notest  テストを省略する
 rem  できあがり: dist\WorklogCanvas\WorklogCanvas.exe
 rem  （dist\WorklogCanvas フォルダごと配布する。Python のインストールは不要）
+rem  ※ GitHub で v1.2.0 のようなタグをプッシュすると、同じ手順で作った zip が
+rem    Release に自動で添付される（.github\workflows\release.yml）
 rem ============================================================
 setlocal
 cd /d "%~dp0"
@@ -38,21 +40,9 @@ if /i not "%~1"=="/notest" (
   )
 )
 
-echo exe を作成しています...
-"%PY%" -m PyInstaller --noconfirm --clean --onedir --windowed --name WorklogCanvas --paths . ^
-  --collect-all icalendar --collect-all recurring_ical_events --collect-all x_wr_timezone ^
-  --collect-data tzdata ^
-  --exclude-module tkinter --exclude-module pytest --exclude-module icalendar.tests ^
-  packaging\WorklogCanvas.py || exit /b 1
-
-echo できた exe の動作を確認しています...
-start "" /wait "dist\WorklogCanvas\WorklogCanvas.exe" --self-test
-if errorlevel 1 (
-  echo [エラー] 動作確認に失敗しました。内容: %APPDATA%\WorklogCanvas\selftest.txt
-  type "%APPDATA%\WorklogCanvas\selftest.txt"
+echo exe を作成し、動作を確認しています...
+"%PY%" packaging\build_exe.py || (
+  echo [エラー] exe の作成または動作確認に失敗しました。
   exit /b 1
 )
-type "%APPDATA%\WorklogCanvas\selftest.txt"
-echo.
-echo 完成しました: dist\WorklogCanvas\WorklogCanvas.exe
 exit /b 0

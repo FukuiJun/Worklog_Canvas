@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
+from .. import __version__
 from ..core import timeutil as tu
 from ..core.models import ValidationError
 from ..core.repository import CategoryInUseError
@@ -29,6 +30,7 @@ class SettingsDialog(QDialog):
         self.display_name.setEnabled(editable)
         form.addRow("表示名", self.display_name)
         form.addRow("ユーザー名", QLabel(f"{own.username}（Windowsのユーザー名）"))
+        form.addRow("バージョン", QLabel(__version__))
 
         folder_box = QWidget()
         fl = QHBoxLayout(folder_box)
