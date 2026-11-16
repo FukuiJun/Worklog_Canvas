@@ -8,7 +8,8 @@ from pathlib import Path
 from PySide6.QtCore import QMimeData, QPoint, QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QDrag, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import (
-    QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QMessageBox,
+    QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMenu,
+    QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QToolButton, QToolTip, QVBoxLayout, QWidget,
 )
 
@@ -335,6 +336,7 @@ class TimelineCanvas(QWidget):
         # 予定バー（作業バーの下）
         p.setFont(self.font())
         self._paint_appointments(p)
+        self._paint_occurrences(p)
         # 作業バー
         tasks = self.state.tasks_by_id()
         p.setFont(self.font())
@@ -511,29 +513,183 @@ class TimelineCanvas(QWidget):
         self.update()
 
     def contextMenuEvent(self, ev):
-        h = self.hit(QPointF(ev.pos()))
+        menu = self.build_context_menu(QPointF(ev.pos()))
+        if menu is not None:
+            menu.exec(ev.globalPos())
+
+    def build_context_menu(self, pos: QPointF) -> QMenu | None:
+        """右クリックのメニュー。作業バー・定期の予定・Outlookの予定・空き時間で中身が変わる。"""
         if self.state.readonly:
-            return
-        if not h:
-            hit = self.appointment_at(QPointF(ev.pos()))
-            if hit:
-                menu = QMenu(self)
-                act = QAction("作業バーにする", menu)
-                act.triggered.connect(lambda: self.convert_appointment(*hit))
-                menu.addAction(act)
-                menu.exec(ev.globalPos())
-            return
-        w = h[0]
-        self.selected_id = w.id
-        self.update()
+            return None
         menu = QMenu(self)
-        act_edit = QAction("編集…", menu)
-        act_del = QAction("削除", menu)
-        act_edit.triggered.connect(lambda: self.open_editor(w.id))
-        act_del.triggered.connect(lambda: self.delete_selected())
-        menu.addAction(act_edit)
-        menu.addAction(act_del)
-        menu.exec(ev.globalPos())
+
+        def act(text, fn, enabled=True, name=None):
+            a = QAction(text, menu)
+            a.setEnabled(enabled)
+            a.triggered.connect(fn)
+            if name:
+                a.setObjectName(name)
+            menu.addAction(a)
+            return a
+
+        h = self.hit(pos)
+        if h:  # 作業バー
+            w = h[0]
+            self.selected_id = w.id
+            self.update()
+            act("編集…", lambda: self.open_editor(w.id), name="edit")
+            act("削除", self.delete_selected, name="delete")
+            return menu
+        occ = self.occurrence_at(pos)
+        if occ:  # 定期の予定
+            act("作業バーにする", lambda: self.confirm_occurrence(occ), name="confirm")
+            act("表示中の定期の予定をまとめて記録…", self.confirm_all_occurrences, name="confirm_all")
+            menu.addSeparator()
+            act("この定期タスクを編集…", lambda: self.edit_recurring(occ.item.id), name="edit_recurring")
+            return menu
+        appt = self.appointment_at(pos)
+        if appt:  # Outlookの予定
+            act("作業バーにする", lambda: self.convert_appointment(*appt), name="convert")
+            menu.addSeparator()
+        col = self.column_at(pos.x())
+        if col is None:
+            return menu if menu.actions() else None
+        date = self.dates[col]
+        res = tl.resolve_drop(self._day_bars(date), self.minute_at(pos.y()))
+        can = isinstance(res, tl.DropCreate)
+        s, e = (res.start, res.end) if can else (0, 0)
+        when = f"{date.month}/{date.day} {tu.format_hhmm(s)}〜{tu.format_hhmm(e)}" if can else "15分以上の空きがありません"
+        title = QAction(f"ここに追加（{when}）", menu)
+        title.setEnabled(False)
+        menu.addAction(title)
+        # 既存タスク（未完了のタスクから選ぶ）
+        sub = menu.addMenu("既存タスク")
+        sub.setObjectName("existing")
+        sub.setEnabled(can)
+        tasks = tl.sort_open_tasks(self.state.repo.tasks)
+        for t in tasks:
+            a = QAction(color_icon(self.state.task_color(t)), t.name, sub)
+            a.setData(t.id)
+            a.triggered.connect(lambda _c=False, tid=t.id: self.add_task_bar(tid, date, s, e))
+            sub.addAction(a)
+        if not tasks:
+            none = QAction("（未完了のタスクがありません）", sub)
+            none.setEnabled(False)
+            sub.addAction(none)
+        act("一時タスク（単発作業）…", lambda: self.add_oneoff_bar(date, s, e), can, name="oneoff")
+        act("新しいタスクを作って追加…", lambda: self.add_new_task_bar(date, s, e), can, name="new_task")
+        menu.addSeparator()
+        act("定期タスクとして登録…", lambda: self.register_recurring(date, s, e or s + 60), True, name="recurring")
+        return menu
+
+    # --- 右クリックからの追加 ---
+    def add_task_bar(self, task_id: str, date: _dt.date, s: int, e: int) -> bool:
+        w = Worklog("", date, s, e, kind=KIND_TASK, task_id=task_id)
+        if self._run(self.state.editor.add, w, "作成"):
+            self.selected_id = self.state.repo.worklogs[-1].id
+            self.update()
+            return True
+        return False
+
+    def add_oneoff_bar(self, date: _dt.date, s: int, e: int) -> bool:
+        title, ok = QInputDialog.getText(self, "一時タスク（単発作業）",
+                                         f"{date.month}/{date.day} {tu.format_hhmm(s)}〜{tu.format_hhmm(e)} に記録する作業のタイトル")
+        title = (title or "").strip()
+        if not ok or not title:
+            return False
+        w = Worklog("", date, s, e, kind=KIND_ONEOFF, title=title)
+        if self._run(self.state.editor.add, w, "作成"):
+            self.selected_id = self.state.repo.worklogs[-1].id
+            self.update()
+            return True
+        return False
+
+    def add_new_task_bar(self, date: _dt.date, s: int, e: int) -> bool:
+        from .task_dialog import TaskDialog
+        dlg = TaskDialog(self.state, None, self)
+        dlg.setWindowTitle("新しいタスクを作って追加")
+        if not dlg.exec() or dlg.saved is None:
+            return False
+        return self.add_task_bar(dlg.saved.id, date, s, e)
+
+    def register_recurring(self, date: _dt.date, s: int, e: int) -> bool:
+        from ..core import recurring as rc
+        from .recurring_dialog import RecurringDialog
+        initial = rc.RecurringItem(id="", start=s, end=min(e, tu.DAY_MINUTES), pattern=rc.WEEKLY,
+                                   weekdays=[date.weekday()], start_date=date)
+        return bool(RecurringDialog(self.state, None, self, initial=initial).exec())
+
+    def edit_recurring(self, rid: str) -> bool:
+        from .recurring_dialog import RecurringDialog
+        return bool(RecurringDialog(self.state, self.state.repo.get_recurring(rid), self).exec())
+
+    # --- 定期の予定（F-09） ---
+    def occurrences(self):
+        from ..core import recurring as rc
+        if self.state.viewing_other or not self.state.repo.recurring:
+            return []  # 他メンバーの閲覧中は出さない
+        return rc.occurrences(self.state.repo.recurring, self.dates, self.visible_worklogs())
+
+    def occurrence_rects(self):
+        out = []
+        for o in self.occurrences():
+            top, bottom = max(o.start, self.view_start), min(o.end, self.view_end)
+            if bottom <= top:
+                continue
+            col = self.dates.index(o.date)
+            out.append((o, QRectF(self.col_x(col) + 2, self.y_of(top) + 1.5, self.col_width() - 4,
+                                  self.y_of(bottom) - self.y_of(top) - 3)))
+        return out
+
+    def occurrence_at(self, pos: QPointF):
+        for o, r in self.occurrence_rects():
+            if r.contains(pos):
+                return o
+        return None
+
+    def _paint_occurrences(self, p: QPainter) -> None:
+        tasks = self.state.tasks_by_id()
+        for o, r in self.occurrence_rects():
+            it = o.item
+            p.setPen(QPen(QColor(theme.ACCENT), 1.4, Qt.DashLine))
+            p.setBrush(QColor(theme.ACCENT_SOFTER))
+            p.drawRoundedRect(r, theme.RADIUS_BAR, theme.RADIUS_BAR)
+            if r.height() < 10:
+                continue
+            p.setPen(QColor(theme.ACCENT_TEXT))
+            fm = QFontMetrics(p.font())
+            name = tl.item_label(it.kind, it.task_id, it.title, tasks)
+            text = f"定期　{name}　{tu.format_hhmm(it.start)}〜{tu.format_hhmm(it.end)}"
+            p.drawText(r.adjusted(8, 2, -6, 0), Qt.AlignLeft | Qt.AlignTop,
+                       fm.elidedText(text, Qt.ElideRight, int(r.width() - 14)))
+
+    def confirm_occurrence(self, occ) -> bool:
+        if self._run(self.state.editor.add, occ.item.to_worklog(occ.date), "定期の予定を記録"):
+            self.selected_id = self.state.repo.worklogs[-1].id
+            self.update()
+            return True
+        return False
+
+    def confirm_all_occurrences(self, ask: bool = True) -> int:
+        occ = self.occurrences()
+        if not occ:
+            self.state.info.emit("記録していない定期の予定はありません")
+            return 0
+        if ask and QMessageBox.question(self, "定期の予定をまとめて記録",
+                                        f"表示中の定期の予定 {len(occ)} 件を、作業バーとして記録しますか？\n"
+                                        "（休んだ日の分は、記録後に削除してください）") != QMessageBox.Yes:
+            return 0
+        n = 0
+        for o in occ:
+            try:
+                self.state.editor.add(o.item.to_worklog(o.date), "定期の予定を記録")
+                n += 1
+            except (OverlapError, ValidationError, KeyError):
+                continue
+        self.state.worklogs_changed.emit()
+        self.state.info.emit(f"定期の予定 {n} 件を記録しました")
+        self.update()
+        return n
 
     def keyPressEvent(self, ev):
         if ev.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.selected_id and not self.state.readonly:
@@ -794,6 +950,8 @@ class TimelineTab(QWidget):
         self.btn_import = QPushButton("予定を取り込む")
         self.btn_import.setProperty("accent", True)
         self.btn_import.setToolTip("Outlookから保存した予定表ファイル（.ics）を選ぶ。タイムラインへドラッグ＆ドロップしても読み込めます")
+        self.btn_recurring = QPushButton("定期タスク…")
+        self.btn_recurring.setToolTip("決まった時間の作業（朝会など）を登録・編集する")
         self.btn_reload = QPushButton("再読み込み")
         self.btn_reload.setToolTip("前回読み込んだ予定表ファイルを読み直す")
         self.ics_file: ics.IcsFile | None = None
@@ -807,6 +965,8 @@ class TimelineTab(QWidget):
         bar.addStretch()
         bar.addWidget(self.btn_import)
         bar.addWidget(self.btn_reload)
+        bar.addSpacing(8)
+        bar.addWidget(self.btn_recurring)
 
         # 左: タスク一覧パネル
         left = QWidget()
@@ -866,6 +1026,7 @@ class TimelineTab(QWidget):
         state.repo_switched.connect(lambda: self._update_appointments(announce=False))
         self.btn_import.clicked.connect(self.choose_ics)
         self.btn_reload.clicked.connect(self.reload_ics)
+        self.btn_recurring.clicked.connect(self.open_recurring_list)
         self.canvas.ics_dropped.connect(self.load_ics)
         if state.settings.ics_path:  # 前回の予定表ファイルから再表示（5.3）
             self._open_ics(state.settings.ics_path, announce_errors=False)
@@ -978,6 +1139,11 @@ class TimelineTab(QWidget):
 
     def refresh_all(self) -> None:
         self.panel.refresh()
+        self.refresh_canvas()
+
+    def open_recurring_list(self) -> None:
+        from .recurring_dialog import RecurringListDialog
+        RecurringListDialog(self.state, self).exec()
         self.refresh_canvas()
 
     def undo(self) -> None:
