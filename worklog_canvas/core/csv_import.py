@@ -15,13 +15,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .colors import next_category_color
-from .models import TASK_NAME_MAX, Category, Task
+from .models import TASK_NAME_MAX, TYPE_DAILY, TYPE_WORK, Category, Task
 from .repository import DataFolder, UserRepository
 
 HEADER_NAME = "タスク名"
 HEADER_CATEGORY = "カテゴリ"
 HEADER_PLANNED = "完了予定日"
 HEADER_DEADLINE = "期限"
+HEADER_TYPE = "種類"  # 任意（業務／日常。空なら業務）
 
 _DATE_RE = re.compile(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$")
 
@@ -81,7 +82,8 @@ def parse(text: str) -> tuple[list[tuple[int, Task]], list[tuple[int, str]]]:
     header = [h.strip() for h in rows[0]]
     if HEADER_NAME not in header:
         raise CsvFormatError(f"1行目に見出し「{HEADER_NAME}」がありません")
-    col = {name: header.index(name) for name in (HEADER_NAME, HEADER_CATEGORY, HEADER_PLANNED, HEADER_DEADLINE)
+    col = {name: header.index(name)
+           for name in (HEADER_NAME, HEADER_CATEGORY, HEADER_PLANNED, HEADER_DEADLINE, HEADER_TYPE)
            if name in header}
 
     def cell(row: list[str], name: str) -> str:
@@ -99,9 +101,15 @@ def parse(text: str) -> tuple[list[tuple[int, Task]], list[tuple[int, str]]]:
                 raise ValueError("タスク名が空です")
             if len(name) > TASK_NAME_MAX:
                 raise ValueError(f"タスク名が{TASK_NAME_MAX}文字を超えています")
+            kind = cell(row, HEADER_TYPE).removesuffix("タスク") or TYPE_WORK
+            if kind not in (TYPE_WORK, TYPE_DAILY):
+                raise ValueError(f"種類は「業務」か「日常」にしてください: {kind}（定期タスクは画面から登録）")
             task = Task(id="", name=name, category=cell(row, HEADER_CATEGORY),
                         planned_end=parse_date(cell(row, HEADER_PLANNED)),
-                        deadline=parse_date(cell(row, HEADER_DEADLINE)))
+                        deadline=parse_date(cell(row, HEADER_DEADLINE)), task_type=kind)
+            if not task.is_work:
+                task.clear_work_fields()
+                task.status = "進行中"
             task.validate()
         except ValueError as e:
             skipped.append((line_no, str(e)))

@@ -309,6 +309,8 @@ def progress_rows(tasks: Iterable[Task], worklogs: Iterable[Worklog], start: _dt
     sub_p = sub_minutes_by_task(in_period)
     rows = []
     for t in tasks:
+        if not t.is_work:  # 進捗を追うのは業務タスクだけ
+            continue
         if not t.is_open and t.id not in main_p and t.id not in sub_p:
             continue
         rows.append(ProgressRow(t, main_all.get(t.id, 0), sub_all.get(t.id, 0), main_p.get(t.id, 0),

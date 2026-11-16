@@ -69,7 +69,7 @@ def load_members(folder: DataFolder, me: UserRepository) -> list[Member]:
 
 def in_progress_tasks(tasks: list[Task]) -> list[Task]:
     """進行中のタスク（完了予定日の近い順、未設定は後ろ）。"""
-    rows = [t for t in tasks if t.status == STATUS_IN_PROGRESS]
+    rows = [t for t in tasks if t.status == STATUS_IN_PROGRESS and t.is_work]
     rows.sort(key=lambda t: (t.planned_end or _dt.date.max, t.id))
     return rows
 
