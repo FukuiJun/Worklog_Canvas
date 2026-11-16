@@ -109,6 +109,7 @@ class ReportPage(QWidget):
         bar.addStretch()
         self.btn_copy = QPushButton("テキストをコピー")
         self.btn_save = QPushButton("Excel保存")
+        self.btn_save.setProperty("accent", True)
         bar.addWidget(self.btn_copy)
         bar.addWidget(self.btn_save)
 

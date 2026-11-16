@@ -37,10 +37,11 @@ SCHEMA_VERSION = 1
 TASKS_FILE = "tasks.json"
 WORKLOGS_FILE = "worklogs.json"
 WEEKLY_NOTES_FILE = "weekly_notes.json"
+RECURRING_FILE = "recurring.json"  # 定期タスク（F-09）
 PROFILE_FILE = "profile.json"
 CATEGORIES_FILE = "categories.json"
 USERS_DIR = "users"
-USER_FILES = (TASKS_FILE, WORKLOGS_FILE, WEEKLY_NOTES_FILE, PROFILE_FILE)
+USER_FILES = (TASKS_FILE, WORKLOGS_FILE, WEEKLY_NOTES_FILE, PROFILE_FILE, RECURRING_FILE)
 
 
 class ReadOnlyError(PermissionError):
@@ -160,6 +161,8 @@ class UserRepository:
         self.tasks: list[Task] = []
         self.worklogs: list[Worklog] = []
         self.weekly_notes: list[WeeklyNote] = []
+        self.recurring: list = []  # RecurringItem（定期タスク）
+        self._next_recurring = 1
         self.profile = Profile(display_name=username)
         self._next_task = 1
         self._next_worklog = 1
@@ -192,6 +195,11 @@ class UserRepository:
         p = storage.read_json(self.path(PROFILE_FILE), default=None)
         self.profile = Profile.from_dict(p) if p else Profile(display_name=self.username)
 
+        from .recurring import RecurringItem
+        r = storage.read_json(self.path(RECURRING_FILE), default={})
+        self.recurring = [RecurringItem.from_dict(d) for d in r.get("recurring", [])]
+        self._next_recurring = _next_id(r.get("next_id"), (x.id for x in self.recurring), "R-")
+
     # --- 保存 ---
     def _check_writable(self) -> None:
         if self.readonly:
@@ -209,6 +217,9 @@ class UserRepository:
                     "weekly_notes": [n.to_dict() for n in sorted(self.weekly_notes, key=lambda n: n.week_start)]}
         if name == PROFILE_FILE:
             return self.profile.to_dict()
+        if name == RECURRING_FILE:
+            return {"version": SCHEMA_VERSION, "next_id": self._next_recurring,
+                    "recurring": [r.to_dict() for r in self.recurring]}
         raise KeyError(name)
 
     def _save(self, name: str) -> bool:
@@ -326,6 +337,9 @@ class UserRepository:
                     sub.kind, sub.task_id, sub.title = KIND_ONEOFF, None, title
         if linked:
             self.save_worklogs()  # 先に作業バーを保存（途中で落ちても参照切れにならない）
+        from .recurring import convert_task_to_oneoff
+        if convert_task_to_oneoff(self.recurring, task_id, task.name):
+            self._save(RECURRING_FILE)
         self.tasks = [t for t in self.tasks if t.id != task_id]
         self.save_tasks()
         return len(linked)
@@ -399,6 +413,41 @@ class UserRepository:
         self.worklogs = [x for x in self.worklogs if x.id != worklog_id]
         self.save_worklogs()
         return w
+
+    # --- 定期タスク（F-09） ---
+    def get_recurring(self, rid: str):
+        for r in self.recurring:
+            if r.id == rid:
+                return r
+        raise KeyError(rid)
+
+    def _validate_recurring(self, item) -> None:
+        item.validate()
+        if item.kind == KIND_TASK:
+            self.get_task(item.task_id)  # 存在しないタスクは KeyError
+
+    def add_recurring(self, item):
+        """定期タスクを登録する（item.id は無視して自動採番）。"""
+        self._check_writable()
+        item = replace(item, id=f"R-{self._next_recurring:04d}", weekdays=list(item.weekdays))
+        self._validate_recurring(item)
+        self.recurring.append(item)
+        self._next_recurring += 1
+        self._save(RECURRING_FILE)
+        return item
+
+    def update_recurring(self, item) -> None:
+        self._check_writable()
+        self.get_recurring(item.id)
+        self._validate_recurring(item)
+        self.recurring = [item if r.id == item.id else r for r in self.recurring]
+        self._save(RECURRING_FILE)
+
+    def delete_recurring(self, rid: str) -> None:
+        self._check_writable()
+        self.get_recurring(rid)
+        self.recurring = [r for r in self.recurring if r.id != rid]
+        self._save(RECURRING_FILE)
 
     # --- 週次メモ ---
     def get_weekly_note(self, week_start: _dt.date) -> WeeklyNote:

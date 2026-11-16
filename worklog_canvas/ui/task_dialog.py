@@ -103,7 +103,8 @@ class TaskDialog(QDialog):
         self.priority = QComboBox()
         self.priority.addItems(PRIORITIES)
         self.priority.setCurrentText(base.priority)
-        self.start_date, self.planned_end, self.deadline, self.done_date = (OptionalDateEdit() for _ in range(4))
+        self.start_date, self.planned_end, self.deadline, self.done_date = (
+            OptionalDateEdit(today=state.today) for _ in range(4))
         self.start_date.set_date(base.start_date)
         self.planned_end.set_date(base.planned_end)
         self.deadline.set_date(base.deadline)

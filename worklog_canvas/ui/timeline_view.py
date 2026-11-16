@@ -8,7 +8,8 @@ from pathlib import Path
 from PySide6.QtCore import QMimeData, QPoint, QPointF, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QDrag, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import (
-    QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QMessageBox,
+    QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMenu,
+    QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QToolButton, QToolTip, QVBoxLayout, QWidget,
 )
 
@@ -21,6 +22,7 @@ from ..core.models import KIND_ONEOFF, KIND_TASK, SubItem, ValidationError, Work
 from ..core.overlap import OVERLAP_MESSAGE, OverlapError, find_overlaps
 from .entry_popup import EntryPopup
 from .state import AppState
+from . import theme
 from .widgets import color_icon, text_color_for
 from .worklog_dialog import WorklogDialog
 
@@ -52,32 +54,42 @@ def day_label(d: _dt.date) -> str:
 def paint_bar(p: QPainter, r: QRectF, w: Worklog, tasks, state: AppState, font: QFont, selected=False, drop=False,
           faded=False) -> None:
     """作業バーを1本描く（タイムラインとチーム一覧で共用）。"""
-    color = QColor(state.worklog_color(w, tasks))
+    color = QColor(state.worklog_color(w, tasks))  # カテゴリの色（点に使う）
+    fill = theme.tint(color.name())  # 地はカテゴリの淡い色
     if faded:
-        color.setAlpha(70)
-    border = QColor(color).darker(140)
-    width = 1.0
+        fill.setAlpha(110)
+    r = r.adjusted(1, 1.5, -1, -1.5)  # 隣のバーとの間に白いすき間
+    pen = Qt.NoPen
     if selected:
-        border, width = QColor("#212121"), 2.0
+        pen = QPen(QColor(theme.ACCENT_TEXT), 2)
     if drop:
-        border, width = QColor("#1565C0"), 3.0
-    p.setPen(QPen(border, width))
-    p.setBrush(color)
-    p.drawRoundedRect(r, 4, 4)
-    # サブタスクの色の帯（右端）
+        pen = QPen(QColor(theme.ACCENT), 2.5, Qt.DashLine)
+    p.setPen(pen)
+    p.setBrush(fill)
+    p.drawRoundedRect(r, theme.RADIUS_BAR, theme.RADIUS_BAR)
+    # サブタスクの色（右端の小さな丸い帯）
+    p.setPen(Qt.NoPen)
     for k, s in enumerate(w.subs):
-        sx = r.right() - (k + 1) * (SUB_STRIP_W + 1)
-        if sx <= r.left() + 20:
+        sx = r.right() - 5 - (k + 1) * (SUB_STRIP_W + 2)
+        if sx <= r.left() + 24 or r.height() < 12:
             break
-        p.fillRect(QRectF(sx, r.top() + 3, SUB_STRIP_W, r.height() - 6),
-                   QColor(state.sub_color(s.kind, s.task_id, tasks)))
+        p.setBrush(QColor(state.sub_color(s.kind, s.task_id, tasks)))
+        p.drawRoundedRect(QRectF(sx, r.top() + 5, SUB_STRIP_W, r.height() - 10), 3, 3)
     if faded:
         return
+    # カテゴリの点
+    dot = 8 if r.height() >= 14 else 6
+    p.setBrush(color)
+    fm0 = QFontMetrics(p.font())
+    dot_y = r.top() + 2 + (min(fm0.height(), r.height() - 4) - dot) / 2 if r.height() >= fm0.height() * 2 + 4 \
+        else r.center().y() - dot / 2
+    p.drawEllipse(QRectF(r.left() + 7, dot_y, dot, dot))
     # 文字
-    text_w = r.width() - 8 - len(w.subs) * (SUB_STRIP_W + 1)
+    left_pad = 7 + dot + 5
+    text_w = r.width() - left_pad - 6 - len(w.subs) * (SUB_STRIP_W + 2)
     if text_w < 12 or r.height() < 10:
         return
-    p.setPen(text_color_for(color.name()))
+    p.setPen(QColor(theme.TEXT))
     fm = QFontMetrics(p.font())
     lh = fm.height()
     lines = []
@@ -92,7 +104,7 @@ def paint_bar(p: QPainter, r: QRectF, w: Worklog, tasks, state: AppState, font: 
     bold.setBold(True)
     if r.height() < lh * 2 + 4:  # 低いバーは1行にまとめる
         one = f"{name} {dur}" + (f"（＋{len(w.subs)}）" if w.subs else "")
-        p.drawText(QRectF(r.left() + 4, r.top(), text_w, r.height()), Qt.AlignVCenter | Qt.AlignLeft,
+        p.drawText(QRectF(r.left() + left_pad, r.top(), text_w, r.height()), Qt.AlignVCenter | Qt.AlignLeft,
                    fm.elidedText(one, Qt.ElideRight, int(text_w)))
         return
     fit = int((r.height() - 2) // lh)
@@ -103,8 +115,9 @@ def paint_bar(p: QPainter, r: QRectF, w: Worklog, tasks, state: AppState, font: 
         if y + lh > r.bottom():
             break
         p.setFont(bold if is_bold else font)
+        p.setPen(QColor(theme.TEXT if is_bold else theme.TEXT_SUB))
         fmx = QFontMetrics(p.font())
-        p.drawText(QRectF(r.left() + 4, y, text_w, lh), Qt.AlignLeft | Qt.AlignVCenter,
+        p.drawText(QRectF(r.left() + left_pad, y, text_w, lh), Qt.AlignLeft | Qt.AlignVCenter,
                    fmx.elidedText(text, Qt.ElideRight, int(text_w)))
         y += lh
     p.setFont(font)
@@ -289,15 +302,17 @@ class TimelineCanvas(QWidget):
     def paintEvent(self, ev):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("#FFFFFF"))
+        p.fillRect(self.rect(), QColor(theme.WHITE))
         today = self.state.today()
         cw = self.col_width()
         for i, d in enumerate(self.dates):
             x = self.col_x(i)
             if d == today:
-                p.fillRect(QRectF(x, 0, cw, self.height()), QColor("#F1F7FD"))
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(theme.ACCENT_SOFTER))
+                p.drawRoundedRect(QRectF(x + 1, 0, cw - 2, self.height()), theme.RADIUS_ROW, theme.RADIUS_ROW)
             elif d.weekday() >= 5:
-                p.fillRect(QRectF(x, 0, cw, self.height()), QColor("#FAFAFA"))
+                p.fillRect(QRectF(x, 0, cw, self.height()), QColor("#FAFBFC"))
         # 時刻の線
         small = QFont(self.font())
         small.setPointSizeF(max(7.0, small.pointSizeF() - 1))
@@ -305,22 +320,23 @@ class TimelineCanvas(QWidget):
         for m in range(self.view_start, self.view_end + 1, 30):
             y = self.y_of(m)
             if m % 60 == 0:
-                p.setPen(QPen(QColor("#D0D0D0"), 1))
+                p.setPen(QPen(QColor(theme.GRID), 1))
                 p.drawLine(QPointF(GUTTER, y), QPointF(self.width(), y))
                 if m < self.view_end:
-                    p.setPen(QColor("#666666"))
+                    p.setPen(QColor("#6B7A89"))
                     p.drawText(QRectF(0, y + 1, GUTTER - 6, 14), Qt.AlignRight | Qt.AlignTop,
                                f"{m // 60}:00")
             else:
-                p.setPen(QPen(QColor("#EEEEEE"), 1, Qt.DashLine))
+                p.setPen(QPen(QColor("#F3F6F9"), 1, Qt.DashLine))
                 p.drawLine(QPointF(GUTTER, y), QPointF(self.width(), y))
-        p.setPen(QPen(QColor("#D0D0D0"), 1))
+        p.setPen(QPen(QColor(theme.GRID), 1))
         for i in range(len(self.dates) + 1):
             x = self.col_x(i)
             p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
         # 予定バー（作業バーの下）
         p.setFont(self.font())
         self._paint_appointments(p)
+        self._paint_occurrences(p)
         # 作業バー
         tasks = self.state.tasks_by_id()
         p.setFont(self.font())
@@ -337,10 +353,10 @@ class TimelineCanvas(QWidget):
         if self._ghost:
             col, s, e = self._ghost
             r = QRectF(self.col_x(col) + 2, self.y_of(s), cw - 4, self.y_of(e) - self.y_of(s))
-            p.setPen(QPen(QColor("#1565C0"), 1.5, Qt.DashLine))
-            p.setBrush(QColor(21, 101, 192, 50))
-            p.drawRoundedRect(r, 4, 4)
-            p.setPen(QColor("#0D47A1"))
+            p.setPen(QPen(QColor(theme.ACCENT), 1.5, Qt.DashLine))
+            p.setBrush(QColor(79, 182, 230, 45))
+            p.drawRoundedRect(r, theme.RADIUS_BAR, theme.RADIUS_BAR)
+            p.setPen(QColor(theme.ACCENT_TEXT))
             p.drawText(r.adjusted(4, 2, -4, -2), Qt.AlignLeft | Qt.AlignTop,
                        f"{tu.format_hhmm(s)}〜{tu.format_hhmm(e)}  {tu.format_hours(e - s)}")
         p.end()
@@ -497,29 +513,183 @@ class TimelineCanvas(QWidget):
         self.update()
 
     def contextMenuEvent(self, ev):
-        h = self.hit(QPointF(ev.pos()))
+        menu = self.build_context_menu(QPointF(ev.pos()))
+        if menu is not None:
+            menu.exec(ev.globalPos())
+
+    def build_context_menu(self, pos: QPointF) -> QMenu | None:
+        """右クリックのメニュー。作業バー・定期の予定・Outlookの予定・空き時間で中身が変わる。"""
         if self.state.readonly:
-            return
-        if not h:
-            hit = self.appointment_at(QPointF(ev.pos()))
-            if hit:
-                menu = QMenu(self)
-                act = QAction("作業バーにする", menu)
-                act.triggered.connect(lambda: self.convert_appointment(*hit))
-                menu.addAction(act)
-                menu.exec(ev.globalPos())
-            return
-        w = h[0]
-        self.selected_id = w.id
-        self.update()
+            return None
         menu = QMenu(self)
-        act_edit = QAction("編集…", menu)
-        act_del = QAction("削除", menu)
-        act_edit.triggered.connect(lambda: self.open_editor(w.id))
-        act_del.triggered.connect(lambda: self.delete_selected())
-        menu.addAction(act_edit)
-        menu.addAction(act_del)
-        menu.exec(ev.globalPos())
+
+        def act(text, fn, enabled=True, name=None):
+            a = QAction(text, menu)
+            a.setEnabled(enabled)
+            a.triggered.connect(fn)
+            if name:
+                a.setObjectName(name)
+            menu.addAction(a)
+            return a
+
+        h = self.hit(pos)
+        if h:  # 作業バー
+            w = h[0]
+            self.selected_id = w.id
+            self.update()
+            act("編集…", lambda: self.open_editor(w.id), name="edit")
+            act("削除", self.delete_selected, name="delete")
+            return menu
+        occ = self.occurrence_at(pos)
+        if occ:  # 定期の予定
+            act("作業バーにする", lambda: self.confirm_occurrence(occ), name="confirm")
+            act("表示中の定期の予定をまとめて記録…", self.confirm_all_occurrences, name="confirm_all")
+            menu.addSeparator()
+            act("この定期タスクを編集…", lambda: self.edit_recurring(occ.item.id), name="edit_recurring")
+            return menu
+        appt = self.appointment_at(pos)
+        if appt:  # Outlookの予定
+            act("作業バーにする", lambda: self.convert_appointment(*appt), name="convert")
+            menu.addSeparator()
+        col = self.column_at(pos.x())
+        if col is None:
+            return menu if menu.actions() else None
+        date = self.dates[col]
+        res = tl.resolve_drop(self._day_bars(date), self.minute_at(pos.y()))
+        can = isinstance(res, tl.DropCreate)
+        s, e = (res.start, res.end) if can else (0, 0)
+        when = f"{date.month}/{date.day} {tu.format_hhmm(s)}〜{tu.format_hhmm(e)}" if can else "15分以上の空きがありません"
+        title = QAction(f"ここに追加（{when}）", menu)
+        title.setEnabled(False)
+        menu.addAction(title)
+        # 既存タスク（未完了のタスクから選ぶ）
+        sub = menu.addMenu("既存タスク")
+        sub.setObjectName("existing")
+        sub.setEnabled(can)
+        tasks = tl.sort_open_tasks(self.state.repo.tasks)
+        for t in tasks:
+            a = QAction(color_icon(self.state.task_color(t)), t.name, sub)
+            a.setData(t.id)
+            a.triggered.connect(lambda _c=False, tid=t.id: self.add_task_bar(tid, date, s, e))
+            sub.addAction(a)
+        if not tasks:
+            none = QAction("（未完了のタスクがありません）", sub)
+            none.setEnabled(False)
+            sub.addAction(none)
+        act("一時タスク（単発作業）…", lambda: self.add_oneoff_bar(date, s, e), can, name="oneoff")
+        act("新しいタスクを作って追加…", lambda: self.add_new_task_bar(date, s, e), can, name="new_task")
+        menu.addSeparator()
+        act("定期タスクとして登録…", lambda: self.register_recurring(date, s, e or s + 60), True, name="recurring")
+        return menu
+
+    # --- 右クリックからの追加 ---
+    def add_task_bar(self, task_id: str, date: _dt.date, s: int, e: int) -> bool:
+        w = Worklog("", date, s, e, kind=KIND_TASK, task_id=task_id)
+        if self._run(self.state.editor.add, w, "作成"):
+            self.selected_id = self.state.repo.worklogs[-1].id
+            self.update()
+            return True
+        return False
+
+    def add_oneoff_bar(self, date: _dt.date, s: int, e: int) -> bool:
+        title, ok = QInputDialog.getText(self, "一時タスク（単発作業）",
+                                         f"{date.month}/{date.day} {tu.format_hhmm(s)}〜{tu.format_hhmm(e)} に記録する作業のタイトル")
+        title = (title or "").strip()
+        if not ok or not title:
+            return False
+        w = Worklog("", date, s, e, kind=KIND_ONEOFF, title=title)
+        if self._run(self.state.editor.add, w, "作成"):
+            self.selected_id = self.state.repo.worklogs[-1].id
+            self.update()
+            return True
+        return False
+
+    def add_new_task_bar(self, date: _dt.date, s: int, e: int) -> bool:
+        from .task_dialog import TaskDialog
+        dlg = TaskDialog(self.state, None, self)
+        dlg.setWindowTitle("新しいタスクを作って追加")
+        if not dlg.exec() or dlg.saved is None:
+            return False
+        return self.add_task_bar(dlg.saved.id, date, s, e)
+
+    def register_recurring(self, date: _dt.date, s: int, e: int) -> bool:
+        from ..core import recurring as rc
+        from .recurring_dialog import RecurringDialog
+        initial = rc.RecurringItem(id="", start=s, end=min(e, tu.DAY_MINUTES), pattern=rc.WEEKLY,
+                                   weekdays=[date.weekday()], start_date=date)
+        return bool(RecurringDialog(self.state, None, self, initial=initial).exec())
+
+    def edit_recurring(self, rid: str) -> bool:
+        from .recurring_dialog import RecurringDialog
+        return bool(RecurringDialog(self.state, self.state.repo.get_recurring(rid), self).exec())
+
+    # --- 定期の予定（F-09） ---
+    def occurrences(self):
+        from ..core import recurring as rc
+        if self.state.viewing_other or not self.state.repo.recurring:
+            return []  # 他メンバーの閲覧中は出さない
+        return rc.occurrences(self.state.repo.recurring, self.dates, self.visible_worklogs())
+
+    def occurrence_rects(self):
+        out = []
+        for o in self.occurrences():
+            top, bottom = max(o.start, self.view_start), min(o.end, self.view_end)
+            if bottom <= top:
+                continue
+            col = self.dates.index(o.date)
+            out.append((o, QRectF(self.col_x(col) + 2, self.y_of(top) + 1.5, self.col_width() - 4,
+                                  self.y_of(bottom) - self.y_of(top) - 3)))
+        return out
+
+    def occurrence_at(self, pos: QPointF):
+        for o, r in self.occurrence_rects():
+            if r.contains(pos):
+                return o
+        return None
+
+    def _paint_occurrences(self, p: QPainter) -> None:
+        tasks = self.state.tasks_by_id()
+        for o, r in self.occurrence_rects():
+            it = o.item
+            p.setPen(QPen(QColor(theme.ACCENT), 1.4, Qt.DashLine))
+            p.setBrush(QColor(theme.ACCENT_SOFTER))
+            p.drawRoundedRect(r, theme.RADIUS_BAR, theme.RADIUS_BAR)
+            if r.height() < 10:
+                continue
+            p.setPen(QColor(theme.ACCENT_TEXT))
+            fm = QFontMetrics(p.font())
+            name = tl.item_label(it.kind, it.task_id, it.title, tasks)
+            text = f"定期　{name}　{tu.format_hhmm(it.start)}〜{tu.format_hhmm(it.end)}"
+            p.drawText(r.adjusted(8, 2, -6, 0), Qt.AlignLeft | Qt.AlignTop,
+                       fm.elidedText(text, Qt.ElideRight, int(r.width() - 14)))
+
+    def confirm_occurrence(self, occ) -> bool:
+        if self._run(self.state.editor.add, occ.item.to_worklog(occ.date), "定期の予定を記録"):
+            self.selected_id = self.state.repo.worklogs[-1].id
+            self.update()
+            return True
+        return False
+
+    def confirm_all_occurrences(self, ask: bool = True) -> int:
+        occ = self.occurrences()
+        if not occ:
+            self.state.info.emit("記録していない定期の予定はありません")
+            return 0
+        if ask and QMessageBox.question(self, "定期の予定をまとめて記録",
+                                        f"表示中の定期の予定 {len(occ)} 件を、作業バーとして記録しますか？\n"
+                                        "（休んだ日の分は、記録後に削除してください）") != QMessageBox.Yes:
+            return 0
+        n = 0
+        for o in occ:
+            try:
+                self.state.editor.add(o.item.to_worklog(o.date), "定期の予定を記録")
+                n += 1
+            except (OverlapError, ValidationError, KeyError):
+                continue
+        self.state.worklogs_changed.emit()
+        self.state.info.emit(f"定期の予定 {n} 件を記録しました")
+        self.update()
+        return n
 
     def keyPressEvent(self, ev):
         if ev.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.selected_id and not self.state.readonly:
@@ -613,15 +783,19 @@ class _ColumnStrip(QWidget):
 
     def paintEvent(self, ev):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#F5F5F5"))
-        p.setPen(QColor("#D0D0D0"))
-        p.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor(theme.WHITE))
         cw = self.canvas.col_width()
         for i, (text, strong) in enumerate(self.texts()):
+            if text and text != "—":  # 稼働時間は淡い丸い地に
+                r = QRectF(self.canvas.col_x(i) + 6, 3, cw - 12, self.height() - 6)
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(theme.BACKGROUND))
+                p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
             f = QFont(self.font())
-            f.setBold(strong)
+            f.setBold(True)
             p.setFont(f)
-            p.setPen(QColor("#1565C0") if strong else QColor("#333333"))
+            p.setPen(QColor(theme.TEXT if text != "—" else "#9AA7B3"))
             p.drawText(QRectF(self.canvas.col_x(i), 0, cw, self.height()), Qt.AlignCenter, text)
         p.end()
 
@@ -644,17 +818,24 @@ class TimelineHeader(_ColumnStrip):
 
     def paintEvent(self, ev):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#F5F5F5"))
-        p.setPen(QColor("#D0D0D0"))
-        p.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor(theme.WHITE))
         cw = self.canvas.col_width()
         today = self.canvas.state.today()
         for i, d in enumerate(self.canvas.dates):
             x = self.canvas.col_x(i)
             f = QFont(self.font())
-            f.setBold(d == today)
+            f.setBold(True)
             p.setFont(f)
-            p.setPen(QColor("#1565C0") if d == today else QColor("#333333"))
+            if d == today:  # 今日は淡い水色の丸い地に濃い青の文字
+                tw = QFontMetrics(f).horizontalAdvance(day_label(d)) + 24
+                pill = QRectF(x + (cw - tw) / 2, 3, tw, self.BASE - 6)
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(theme.ACCENT_SOFT))
+                p.drawRoundedRect(pill, pill.height() / 2, pill.height() / 2)
+                p.setPen(QColor(theme.ACCENT_TEXT))
+            else:
+                p.setPen(QColor(theme.TEXT if d.weekday() < 5 else theme.TEXT_MUTED))
             p.drawText(QRectF(x, 0, cw, self.BASE), Qt.AlignCenter, day_label(d))
             p.setFont(self.font())
             fm = QFontMetrics(self.font())
@@ -767,7 +948,10 @@ class TimelineTab(QWidget):
             b.setMinimumWidth(40)
             grp.addButton(b)
         self.btn_import = QPushButton("予定を取り込む")
+        self.btn_import.setProperty("accent", True)
         self.btn_import.setToolTip("Outlookから保存した予定表ファイル（.ics）を選ぶ。タイムラインへドラッグ＆ドロップしても読み込めます")
+        self.btn_recurring = QPushButton("定期タスク…")
+        self.btn_recurring.setToolTip("決まった時間の作業（朝会など）を登録・編集する")
         self.btn_reload = QPushButton("再読み込み")
         self.btn_reload.setToolTip("前回読み込んだ予定表ファイルを読み直す")
         self.ics_file: ics.IcsFile | None = None
@@ -781,16 +965,25 @@ class TimelineTab(QWidget):
         bar.addStretch()
         bar.addWidget(self.btn_import)
         bar.addWidget(self.btn_reload)
+        bar.addSpacing(8)
+        bar.addWidget(self.btn_recurring)
 
         # 左: タスク一覧パネル
         left = QWidget()
-        left.setFixedWidth(280)
+        theme.card(left)
+        left.setFixedWidth(290)
         ll = QVBoxLayout(left)
-        ll.setContentsMargins(0, 0, 0, 0)
-        cap = QLabel("未完了のタスク（ドラッグで記録）")
-        cap.setStyleSheet("font-weight: bold;")
+        ll.setContentsMargins(14, 14, 14, 14)
+        ll.setSpacing(4)
+        cap = QLabel("未完了のタスク")
+        cap.setStyleSheet("font-weight: bold; font-size: 13px;")
+        hint = QLabel("タイムラインへドラッグして記録")
+        hint.setStyleSheet(f"color: {theme.TEXT_MUTED};")
         ll.addWidget(cap)
+        ll.addWidget(hint)
         self.panel = TaskPanel(state)
+        self.panel.setStyleSheet("QListWidget { border: 0; }")
+        self.panel.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         ll.addWidget(self.panel)
 
         # 右: タイムライン
@@ -804,17 +997,21 @@ class TimelineTab(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll = scroll
         right = QWidget()
+        theme.card(right)
         rl = QVBoxLayout(right)
-        rl.setContentsMargins(0, 0, 0, 0)
-        rl.setSpacing(0)
+        rl.setContentsMargins(12, 10, 12, 10)
+        rl.setSpacing(4)
         rl.addWidget(self.header)
         rl.addWidget(scroll, 1)
         rl.addWidget(self.footer)
 
         body = QHBoxLayout()
+        body.setSpacing(14)
         body.addWidget(left)
         body.addWidget(right, 1)
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 6, 0, 0)
+        lay.setSpacing(12)
         lay.addLayout(bar)
         lay.addLayout(body, 1)
 
@@ -829,6 +1026,7 @@ class TimelineTab(QWidget):
         state.repo_switched.connect(lambda: self._update_appointments(announce=False))
         self.btn_import.clicked.connect(self.choose_ics)
         self.btn_reload.clicked.connect(self.reload_ics)
+        self.btn_recurring.clicked.connect(self.open_recurring_list)
         self.canvas.ics_dropped.connect(self.load_ics)
         if state.settings.ics_path:  # 前回の予定表ファイルから再表示（5.3）
             self._open_ics(state.settings.ics_path, announce_errors=False)
@@ -941,6 +1139,11 @@ class TimelineTab(QWidget):
 
     def refresh_all(self) -> None:
         self.panel.refresh()
+        self.refresh_canvas()
+
+    def open_recurring_list(self) -> None:
+        from .recurring_dialog import RecurringListDialog
+        RecurringListDialog(self.state, self).exec()
         self.refresh_canvas()
 
     def undo(self) -> None:
