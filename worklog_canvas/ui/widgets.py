@@ -14,8 +14,18 @@ _NONE_DATE = QDate(2000, 1, 1)
 
 
 def color_icon(color: str, size: int = 12) -> QIcon:
-    pm = QPixmap(size, size)
-    pm.fill(QColor(color))
+    """カテゴリなどの色を示す丸い点。"""
+    from PySide6.QtGui import QPainter
+    pm = QPixmap(size * 2, size * 2)  # 2倍で描いて、高解像度の画面でもにじまないように
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(color))
+    d = size * 2 * 0.72
+    p.drawEllipse((size * 2 - d) / 2, (size * 2 - d) / 2, d, d)
+    p.end()
+    pm.setDevicePixelRatio(2)
     return QIcon(pm)
 
 

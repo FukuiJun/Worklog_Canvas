@@ -21,6 +21,7 @@ from ..core.models import KIND_ONEOFF, KIND_TASK, SubItem, ValidationError, Work
 from ..core.overlap import OVERLAP_MESSAGE, OverlapError, find_overlaps
 from .entry_popup import EntryPopup
 from .state import AppState
+from . import theme
 from .widgets import color_icon, text_color_for
 from .worklog_dialog import WorklogDialog
 
@@ -52,32 +53,42 @@ def day_label(d: _dt.date) -> str:
 def paint_bar(p: QPainter, r: QRectF, w: Worklog, tasks, state: AppState, font: QFont, selected=False, drop=False,
           faded=False) -> None:
     """作業バーを1本描く（タイムラインとチーム一覧で共用）。"""
-    color = QColor(state.worklog_color(w, tasks))
+    color = QColor(state.worklog_color(w, tasks))  # カテゴリの色（点に使う）
+    fill = theme.tint(color.name())  # 地はカテゴリの淡い色
     if faded:
-        color.setAlpha(70)
-    border = QColor(color).darker(140)
-    width = 1.0
+        fill.setAlpha(110)
+    r = r.adjusted(1, 1.5, -1, -1.5)  # 隣のバーとの間に白いすき間
+    pen = Qt.NoPen
     if selected:
-        border, width = QColor("#212121"), 2.0
+        pen = QPen(QColor(theme.ACCENT_TEXT), 2)
     if drop:
-        border, width = QColor("#1565C0"), 3.0
-    p.setPen(QPen(border, width))
-    p.setBrush(color)
-    p.drawRoundedRect(r, 4, 4)
-    # サブタスクの色の帯（右端）
+        pen = QPen(QColor(theme.ACCENT), 2.5, Qt.DashLine)
+    p.setPen(pen)
+    p.setBrush(fill)
+    p.drawRoundedRect(r, theme.RADIUS_BAR, theme.RADIUS_BAR)
+    # サブタスクの色（右端の小さな丸い帯）
+    p.setPen(Qt.NoPen)
     for k, s in enumerate(w.subs):
-        sx = r.right() - (k + 1) * (SUB_STRIP_W + 1)
-        if sx <= r.left() + 20:
+        sx = r.right() - 5 - (k + 1) * (SUB_STRIP_W + 2)
+        if sx <= r.left() + 24 or r.height() < 12:
             break
-        p.fillRect(QRectF(sx, r.top() + 3, SUB_STRIP_W, r.height() - 6),
-                   QColor(state.sub_color(s.kind, s.task_id, tasks)))
+        p.setBrush(QColor(state.sub_color(s.kind, s.task_id, tasks)))
+        p.drawRoundedRect(QRectF(sx, r.top() + 5, SUB_STRIP_W, r.height() - 10), 3, 3)
     if faded:
         return
+    # カテゴリの点
+    dot = 8 if r.height() >= 14 else 6
+    p.setBrush(color)
+    fm0 = QFontMetrics(p.font())
+    dot_y = r.top() + 2 + (min(fm0.height(), r.height() - 4) - dot) / 2 if r.height() >= fm0.height() * 2 + 4 \
+        else r.center().y() - dot / 2
+    p.drawEllipse(QRectF(r.left() + 7, dot_y, dot, dot))
     # 文字
-    text_w = r.width() - 8 - len(w.subs) * (SUB_STRIP_W + 1)
+    left_pad = 7 + dot + 5
+    text_w = r.width() - left_pad - 6 - len(w.subs) * (SUB_STRIP_W + 2)
     if text_w < 12 or r.height() < 10:
         return
-    p.setPen(text_color_for(color.name()))
+    p.setPen(QColor(theme.TEXT))
     fm = QFontMetrics(p.font())
     lh = fm.height()
     lines = []
@@ -92,7 +103,7 @@ def paint_bar(p: QPainter, r: QRectF, w: Worklog, tasks, state: AppState, font: 
     bold.setBold(True)
     if r.height() < lh * 2 + 4:  # 低いバーは1行にまとめる
         one = f"{name} {dur}" + (f"（＋{len(w.subs)}）" if w.subs else "")
-        p.drawText(QRectF(r.left() + 4, r.top(), text_w, r.height()), Qt.AlignVCenter | Qt.AlignLeft,
+        p.drawText(QRectF(r.left() + left_pad, r.top(), text_w, r.height()), Qt.AlignVCenter | Qt.AlignLeft,
                    fm.elidedText(one, Qt.ElideRight, int(text_w)))
         return
     fit = int((r.height() - 2) // lh)
@@ -103,8 +114,9 @@ def paint_bar(p: QPainter, r: QRectF, w: Worklog, tasks, state: AppState, font: 
         if y + lh > r.bottom():
             break
         p.setFont(bold if is_bold else font)
+        p.setPen(QColor(theme.TEXT if is_bold else theme.TEXT_SUB))
         fmx = QFontMetrics(p.font())
-        p.drawText(QRectF(r.left() + 4, y, text_w, lh), Qt.AlignLeft | Qt.AlignVCenter,
+        p.drawText(QRectF(r.left() + left_pad, y, text_w, lh), Qt.AlignLeft | Qt.AlignVCenter,
                    fmx.elidedText(text, Qt.ElideRight, int(text_w)))
         y += lh
     p.setFont(font)
@@ -289,15 +301,17 @@ class TimelineCanvas(QWidget):
     def paintEvent(self, ev):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("#FFFFFF"))
+        p.fillRect(self.rect(), QColor(theme.WHITE))
         today = self.state.today()
         cw = self.col_width()
         for i, d in enumerate(self.dates):
             x = self.col_x(i)
             if d == today:
-                p.fillRect(QRectF(x, 0, cw, self.height()), QColor("#F1F7FD"))
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(theme.ACCENT_SOFTER))
+                p.drawRoundedRect(QRectF(x + 1, 0, cw - 2, self.height()), theme.RADIUS_ROW, theme.RADIUS_ROW)
             elif d.weekday() >= 5:
-                p.fillRect(QRectF(x, 0, cw, self.height()), QColor("#FAFAFA"))
+                p.fillRect(QRectF(x, 0, cw, self.height()), QColor("#FAFBFC"))
         # 時刻の線
         small = QFont(self.font())
         small.setPointSizeF(max(7.0, small.pointSizeF() - 1))
@@ -305,16 +319,16 @@ class TimelineCanvas(QWidget):
         for m in range(self.view_start, self.view_end + 1, 30):
             y = self.y_of(m)
             if m % 60 == 0:
-                p.setPen(QPen(QColor("#D0D0D0"), 1))
+                p.setPen(QPen(QColor(theme.GRID), 1))
                 p.drawLine(QPointF(GUTTER, y), QPointF(self.width(), y))
                 if m < self.view_end:
-                    p.setPen(QColor("#666666"))
+                    p.setPen(QColor("#6B7A89"))
                     p.drawText(QRectF(0, y + 1, GUTTER - 6, 14), Qt.AlignRight | Qt.AlignTop,
                                f"{m // 60}:00")
             else:
-                p.setPen(QPen(QColor("#EEEEEE"), 1, Qt.DashLine))
+                p.setPen(QPen(QColor("#F3F6F9"), 1, Qt.DashLine))
                 p.drawLine(QPointF(GUTTER, y), QPointF(self.width(), y))
-        p.setPen(QPen(QColor("#D0D0D0"), 1))
+        p.setPen(QPen(QColor(theme.GRID), 1))
         for i in range(len(self.dates) + 1):
             x = self.col_x(i)
             p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
@@ -337,10 +351,10 @@ class TimelineCanvas(QWidget):
         if self._ghost:
             col, s, e = self._ghost
             r = QRectF(self.col_x(col) + 2, self.y_of(s), cw - 4, self.y_of(e) - self.y_of(s))
-            p.setPen(QPen(QColor("#1565C0"), 1.5, Qt.DashLine))
-            p.setBrush(QColor(21, 101, 192, 50))
-            p.drawRoundedRect(r, 4, 4)
-            p.setPen(QColor("#0D47A1"))
+            p.setPen(QPen(QColor(theme.ACCENT), 1.5, Qt.DashLine))
+            p.setBrush(QColor(79, 182, 230, 45))
+            p.drawRoundedRect(r, theme.RADIUS_BAR, theme.RADIUS_BAR)
+            p.setPen(QColor(theme.ACCENT_TEXT))
             p.drawText(r.adjusted(4, 2, -4, -2), Qt.AlignLeft | Qt.AlignTop,
                        f"{tu.format_hhmm(s)}〜{tu.format_hhmm(e)}  {tu.format_hours(e - s)}")
         p.end()
@@ -613,15 +627,19 @@ class _ColumnStrip(QWidget):
 
     def paintEvent(self, ev):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#F5F5F5"))
-        p.setPen(QColor("#D0D0D0"))
-        p.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor(theme.WHITE))
         cw = self.canvas.col_width()
         for i, (text, strong) in enumerate(self.texts()):
+            if text and text != "—":  # 稼働時間は淡い丸い地に
+                r = QRectF(self.canvas.col_x(i) + 6, 3, cw - 12, self.height() - 6)
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(theme.BACKGROUND))
+                p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
             f = QFont(self.font())
-            f.setBold(strong)
+            f.setBold(True)
             p.setFont(f)
-            p.setPen(QColor("#1565C0") if strong else QColor("#333333"))
+            p.setPen(QColor(theme.TEXT if text != "—" else "#9AA7B3"))
             p.drawText(QRectF(self.canvas.col_x(i), 0, cw, self.height()), Qt.AlignCenter, text)
         p.end()
 
@@ -644,17 +662,24 @@ class TimelineHeader(_ColumnStrip):
 
     def paintEvent(self, ev):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#F5F5F5"))
-        p.setPen(QColor("#D0D0D0"))
-        p.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor(theme.WHITE))
         cw = self.canvas.col_width()
         today = self.canvas.state.today()
         for i, d in enumerate(self.canvas.dates):
             x = self.canvas.col_x(i)
             f = QFont(self.font())
-            f.setBold(d == today)
+            f.setBold(True)
             p.setFont(f)
-            p.setPen(QColor("#1565C0") if d == today else QColor("#333333"))
+            if d == today:  # 今日は淡い水色の丸い地に濃い青の文字
+                tw = QFontMetrics(f).horizontalAdvance(day_label(d)) + 24
+                pill = QRectF(x + (cw - tw) / 2, 3, tw, self.BASE - 6)
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(theme.ACCENT_SOFT))
+                p.drawRoundedRect(pill, pill.height() / 2, pill.height() / 2)
+                p.setPen(QColor(theme.ACCENT_TEXT))
+            else:
+                p.setPen(QColor(theme.TEXT if d.weekday() < 5 else theme.TEXT_MUTED))
             p.drawText(QRectF(x, 0, cw, self.BASE), Qt.AlignCenter, day_label(d))
             p.setFont(self.font())
             fm = QFontMetrics(self.font())
@@ -767,6 +792,7 @@ class TimelineTab(QWidget):
             b.setMinimumWidth(40)
             grp.addButton(b)
         self.btn_import = QPushButton("予定を取り込む")
+        self.btn_import.setProperty("accent", True)
         self.btn_import.setToolTip("Outlookから保存した予定表ファイル（.ics）を選ぶ。タイムラインへドラッグ＆ドロップしても読み込めます")
         self.btn_reload = QPushButton("再読み込み")
         self.btn_reload.setToolTip("前回読み込んだ予定表ファイルを読み直す")
@@ -784,13 +810,20 @@ class TimelineTab(QWidget):
 
         # 左: タスク一覧パネル
         left = QWidget()
-        left.setFixedWidth(280)
+        theme.card(left)
+        left.setFixedWidth(290)
         ll = QVBoxLayout(left)
-        ll.setContentsMargins(0, 0, 0, 0)
-        cap = QLabel("未完了のタスク（ドラッグで記録）")
-        cap.setStyleSheet("font-weight: bold;")
+        ll.setContentsMargins(14, 14, 14, 14)
+        ll.setSpacing(4)
+        cap = QLabel("未完了のタスク")
+        cap.setStyleSheet("font-weight: bold; font-size: 13px;")
+        hint = QLabel("タイムラインへドラッグして記録")
+        hint.setStyleSheet(f"color: {theme.TEXT_MUTED};")
         ll.addWidget(cap)
+        ll.addWidget(hint)
         self.panel = TaskPanel(state)
+        self.panel.setStyleSheet("QListWidget { border: 0; }")
+        self.panel.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         ll.addWidget(self.panel)
 
         # 右: タイムライン
@@ -804,17 +837,21 @@ class TimelineTab(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll = scroll
         right = QWidget()
+        theme.card(right)
         rl = QVBoxLayout(right)
-        rl.setContentsMargins(0, 0, 0, 0)
-        rl.setSpacing(0)
+        rl.setContentsMargins(12, 10, 12, 10)
+        rl.setSpacing(4)
         rl.addWidget(self.header)
         rl.addWidget(scroll, 1)
         rl.addWidget(self.footer)
 
         body = QHBoxLayout()
+        body.setSpacing(14)
         body.addWidget(left)
         body.addWidget(right, 1)
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 6, 0, 0)
+        lay.setSpacing(12)
         lay.addLayout(bar)
         lay.addLayout(body, 1)
 

@@ -20,6 +20,7 @@ from ..core import applog, backup, storage, team
 from ..core.lock import HEARTBEAT_SECONDS, UserLock
 from ..core.repository import DataFolder, UserRepository
 from ..core.settings import Settings, app_dir
+from . import theme
 from .settings_dialog import SettingsDialog
 from .state import AppState
 from .summary_tab import SummaryTab
@@ -42,7 +43,19 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1280, 720)
 
         # 上部: 利用者の切り替え・更新・設定、閲覧モードの表示
-        top = QHBoxLayout()
+        top_card = QWidget()
+        theme.card(top_card)
+        top = QHBoxLayout(top_card)
+        top.setContentsMargins(14, 8, 10, 8)
+        top.setSpacing(10)
+        logo = QLabel()
+        logo.setFixedSize(30, 30)
+        logo.setStyleSheet(f"background: {theme.ACCENT}; border-radius: 10px;")
+        top.addWidget(logo)
+        app_name = QLabel(APP_TITLE)
+        app_name.setStyleSheet("font-weight: bold; font-size: 15px;")
+        top.addWidget(app_name)
+        top.addSpacing(16)
         top.addWidget(QLabel("表示する人"))
         self.user_combo = QComboBox()
         self.user_combo.setMinimumWidth(160)
@@ -51,7 +64,7 @@ class MainWindow(QMainWindow):
         self.btn_refresh.setToolTip("共有フォルダから読み込み直す（他のメンバーの記録、カテゴリ）。自動では更新しません")
         top.addWidget(self.btn_refresh)
         self.banner = QLabel()
-        self.banner.setStyleSheet("background:#FFF3C4; color:#5D4200; padding:4px 10px; border-radius:3px;"
+        self.banner.setStyleSheet("background:#FFF3C4; color:#5D4200; padding:5px 14px; border-radius:13px;"
                                   "font-weight:bold;")
         top.addSpacing(12)
         top.addWidget(self.banner)
@@ -70,14 +83,16 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.team, "チーム")
         central = QWidget()
         cl = QVBoxLayout(central)
-        cl.setContentsMargins(6, 6, 6, 0)
-        cl.addLayout(top)
+        cl.setContentsMargins(16, 14, 16, 8)
+        cl.setSpacing(10)
+        cl.addWidget(top_card)
         cl.addWidget(self.tabs, 1)
         self.setCentralWidget(central)
 
         sb = self.statusBar()
         self.unsaved_label = QLabel(UNSAVED_TEXT)
-        self.unsaved_label.setStyleSheet("color:#FFFFFF; background:#C62828; padding:1px 8px; font-weight:bold;")
+        self.unsaved_label.setStyleSheet("color:#FFFFFF; background:#C62828; padding:2px 12px; border-radius:10px;"
+                                         "font-weight:bold;")
         self.unsaved_label.setToolTip("共有フォルダに保存できませんでした。30秒ごとに再試行しています")
         self.unsaved_label.hide()
         sb.addWidget(self.unsaved_label)
@@ -246,6 +261,9 @@ class MainWindow(QMainWindow):
 
 # ===========================================================================
 def _apply_font(app: QApplication) -> None:
+    """日本語のフォントと、白基調・水色・角丸の見た目を当てる。"""
+    from . import theme
+    theme.apply(app)
     families = set(QFontDatabase.families())
     for name in ("Yu Gothic UI", "Meiryo UI", "Meiryo", "Noto Sans CJK JP", "WenQuanYi Zen Hei"):
         if name in families:

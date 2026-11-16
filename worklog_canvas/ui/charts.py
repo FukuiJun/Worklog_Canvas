@@ -18,6 +18,7 @@ from ..core import aggregate as ag
 from ..core import timeutil as tu
 
 SURFACE = QColor("#FFFFFF")
+ACCENT = "#4FB6E6"
 GRID = QColor("#E6E6E6")
 AXIS = QColor("#BDBDBD")
 TEXT = QColor("#212121")
@@ -251,11 +252,11 @@ class ProgressMeter(QWidget):
         text_w = fm.horizontalAdvance("100%") + 8
         track = QRectF(6, self.height() / 2 - 4, self.width() - text_w - 12, 8)
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor("#E8E8E8"))
+        p.setBrush(QColor("#E6EEF4"))
         p.drawRoundedRect(track, 4, 4)
         if self.value:
             fill = QRectF(track.left(), track.top(), track.width() * self.value / 100, track.height())
-            p.setBrush(QColor(self.color))
+            p.setBrush(QColor(ACCENT))  # 進捗は水色（デザインのスタイルガイド）
             p.drawRoundedRect(fill, 4, 4)
         p.setPen(TEXT)
         p.drawText(QRectF(track.right() + 6, 0, text_w, self.height()), Qt.AlignRight | Qt.AlignVCenter,

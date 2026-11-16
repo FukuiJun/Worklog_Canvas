@@ -14,6 +14,7 @@ from ..core import aggregate as ag
 from ..core import team
 from ..core import timeline as tl
 from ..core import timeutil as tu
+from . import theme
 from .state import AppState
 from .timeline_view import GUTTER, MIN_HOUR_PX, WEEKDAYS, paint_bar
 from .widgets import color_icon
@@ -55,22 +56,22 @@ class TeamCanvas(QWidget):
     def paintEvent(self, ev):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("#FFFFFF"))
+        p.fillRect(self.rect(), QColor(theme.WHITE))
         small = QFont(self.font())
         small.setPointSizeF(max(7.0, small.pointSizeF() - 1))
         p.setFont(small)
         for m in range(self.view_start, self.view_end + 1, 30):
             y = self.y_of(m)
             if m % 60 == 0:
-                p.setPen(QPen(QColor("#D0D0D0"), 1))
+                p.setPen(QPen(QColor(theme.GRID), 1))
                 p.drawLine(QPointF(GUTTER, y), QPointF(self.width(), y))
                 if m < self.view_end:
-                    p.setPen(QColor("#666666"))
+                    p.setPen(QColor("#6B7A89"))
                     p.drawText(QRectF(0, y + 1, GUTTER - 6, 14), Qt.AlignRight | Qt.AlignTop, f"{m // 60}:00")
             else:
-                p.setPen(QPen(QColor("#EEEEEE"), 1, Qt.DashLine))
+                p.setPen(QPen(QColor("#F3F6F9"), 1, Qt.DashLine))
                 p.drawLine(QPointF(GUTTER, y), QPointF(self.width(), y))
-        p.setPen(QPen(QColor("#D0D0D0"), 1))
+        p.setPen(QPen(QColor(theme.GRID), 1))
         for i in range(len(self.days) + 1):
             p.drawLine(QPointF(self.col_x(i), 0), QPointF(self.col_x(i), self.height()))
         p.setFont(self.font())
@@ -114,7 +115,7 @@ class _Strip(QWidget):
 
     def paintEvent(self, ev):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#F5F5F5"))
+        p.fillRect(self.rect(), QColor(theme.WHITE))
         cw = self.canvas.col_width()
         for i, d in enumerate(self.canvas.days):
             if self.footer:
@@ -125,7 +126,7 @@ class _Strip(QWidget):
                 f = QFont(self.font())
                 f.setBold(True)
             p.setFont(f)
-            p.setPen(QColor("#333333"))
+            p.setPen(QColor(theme.TEXT))
             p.drawText(QRectF(self.canvas.col_x(i), 0, cw, self.height()), Qt.AlignCenter, text)
         p.end()
 
@@ -166,6 +167,8 @@ class TeamTab(QWidget):
         il.addWidget(self.header)
         il.addWidget(self.canvas, 1)
         il.addWidget(self.footer)
+        theme.card(inner)
+        il.setContentsMargins(12, 8, 12, 8)
         scroll = QScrollArea()
         scroll.setWidget(inner)
         scroll.setWidgetResizable(True)

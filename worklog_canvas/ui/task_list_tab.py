@@ -102,7 +102,8 @@ class TaskListTab(QWidget):
         super().__init__(parent)
         self.state = state
         bar = QHBoxLayout()
-        self.btn_add = QPushButton("追加")
+        self.btn_add = QPushButton("＋ タスクを追加")
+        self.btn_add.setProperty("accent", True)
         self.btn_edit = QPushButton("編集")
         self.btn_dup = QPushButton("複製")
         self.btn_del = QPushButton("削除")
