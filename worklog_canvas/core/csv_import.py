@@ -2,7 +2,8 @@
 
 - 文字コードは UTF-8（BOM付き）または Shift_JIS を自動判定する。
 - 1行目は見出し（タスク名,カテゴリ,完了予定日,期限）。列は見出しの名前で探すので順番は問わない。
-- タスク名以外は空でよい。categories.json にないカテゴリは自動で追加する。
+- タスク名以外は空でよい。categories.json にないカテゴリ・サブカテゴリは自動で追加する。
+- 任意の列: 「サブカテゴリ」「種類」（業務／日常）。
 - 不正な行はスキップし、行番号（ファイルの行番号。見出しが1行目）と理由を返す。
 """
 from __future__ import annotations
@@ -22,6 +23,7 @@ HEADER_NAME = "タスク名"
 HEADER_CATEGORY = "カテゴリ"
 HEADER_PLANNED = "完了予定日"
 HEADER_DEADLINE = "期限"
+HEADER_SUB = "サブカテゴリ"  # 任意（カテゴリがある行だけ。ないサブカテゴリは自動で追加する）
 HEADER_TYPE = "種類"  # 任意（業務／日常。空なら業務）
 
 _DATE_RE = re.compile(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$")
@@ -83,7 +85,7 @@ def parse(text: str) -> tuple[list[tuple[int, Task]], list[tuple[int, str]]]:
     if HEADER_NAME not in header:
         raise CsvFormatError(f"1行目に見出し「{HEADER_NAME}」がありません")
     col = {name: header.index(name)
-           for name in (HEADER_NAME, HEADER_CATEGORY, HEADER_PLANNED, HEADER_DEADLINE, HEADER_TYPE)
+           for name in (HEADER_NAME, HEADER_CATEGORY, HEADER_SUB, HEADER_PLANNED, HEADER_DEADLINE, HEADER_TYPE)
            if name in header}
 
     def cell(row: list[str], name: str) -> str:
@@ -104,12 +106,11 @@ def parse(text: str) -> tuple[list[tuple[int, Task]], list[tuple[int, str]]]:
             kind = cell(row, HEADER_TYPE).removesuffix("タスク") or TYPE_WORK
             if kind not in (TYPE_WORK, TYPE_DAILY):
                 raise ValueError(f"種類は「業務」か「日常」にしてください: {kind}（定期タスクは画面から登録）")
-            task = Task(id="", name=name, category=cell(row, HEADER_CATEGORY),
+            task = Task(id="", name=name, category=cell(row, HEADER_CATEGORY), subcategory=cell(row, HEADER_SUB),
                         planned_end=parse_date(cell(row, HEADER_PLANNED)),
                         deadline=parse_date(cell(row, HEADER_DEADLINE)), task_type=kind)
             if not task.is_work:
                 task.clear_work_fields()
-                task.status = "進行中"
             task.validate()
         except ValueError as e:
             skipped.append((line_no, str(e)))
@@ -130,5 +131,11 @@ def import_csv(path: str | Path, folder: DataFolder, repo: UserRepository) -> Im
             folder.add_category(Category(task.category, color))
             known[task.category] = color
             result.new_categories.append(task.category)
+    subs = folder.subcategories()
+    for _, task in parsed:
+        if task.subcategory and task.subcategory not in subs.get(task.category, []):
+            folder.add_subcategory(task.category, task.subcategory)
+            subs.setdefault(task.category, []).append(task.subcategory)
+            result.new_categories.append(f"{task.category} › {task.subcategory}")
     result.tasks = repo.add_tasks([t for _, t in parsed])
     return result

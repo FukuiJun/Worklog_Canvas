@@ -134,7 +134,7 @@ class DataFolder:
             raise KeyError(old)
         if new != old and any(c.name == new for c in current):
             raise ValidationError("カテゴリ名", f"カテゴリ「{new}」は既にあります")
-        renamed = Category(new.strip(), target.color)
+        renamed = Category(new.strip(), target.color, list(target.subs))
         renamed.validate()
         self._write_categories([renamed if c.name == old else c for c in current])
 
@@ -147,6 +147,64 @@ class DataFolder:
         if not any(c.name == name for c in current):
             raise KeyError(name)
         self._write_categories([c for c in current if c.name != name])
+
+    # --- サブカテゴリ（カテゴリの下の分類。全員共通） ---
+    def subcategories(self) -> dict[str, list[str]]:
+        """カテゴリ名 → サブカテゴリ名の一覧。"""
+        return {c.name: list(c.subs) for c in self.load_categories()}
+
+    def _category_for_sub(self, current: list[Category], category: str) -> Category:
+        target = next((c for c in current if c.name == category), None)
+        if target is None:
+            raise KeyError(category)
+        return target
+
+    @staticmethod
+    def _check_sub_name(name: str) -> str:
+        name = (name or "").strip()
+        if not name:
+            raise ValidationError("サブカテゴリ名", "サブカテゴリ名を入力してください")
+        return name
+
+    def add_subcategory(self, category: str, name: str) -> bool:
+        """カテゴリの下にサブカテゴリを追加する。同名が既にあれば何もしないで False。"""
+        name = self._check_sub_name(name)
+        current = self.load_categories()
+        target = self._category_for_sub(current, category)
+        if name in target.subs:
+            return False
+        target.subs.append(name)
+        self._write_categories(current)
+        return True
+
+    def rename_subcategory(self, category: str, old: str, new: str, own_tasks: Iterable[Task]) -> None:
+        """サブカテゴリ名を変える。自分のデータで使うタスクが0件のときだけ（カテゴリと同じ決まり）。"""
+        label = f"{category} › {old}"
+        used = sum(1 for t in own_tasks if t.category == category and t.subcategory == old)
+        if used:
+            raise CategoryInUseError(label, used)
+        new = self._check_sub_name(new)
+        current = self.load_categories()
+        target = self._category_for_sub(current, category)
+        if old not in target.subs:
+            raise KeyError(label)
+        if new != old and new in target.subs:
+            raise ValidationError("サブカテゴリ名", f"サブカテゴリ「{new}」は既にあります")
+        target.subs = [new if x == old else x for x in target.subs]
+        self._write_categories(current)
+
+    def delete_subcategory(self, category: str, name: str, own_tasks: Iterable[Task]) -> None:
+        """サブカテゴリを削除する。自分のデータで使うタスクが0件のときだけ。"""
+        label = f"{category} › {name}"
+        used = sum(1 for t in own_tasks if t.category == category and t.subcategory == name)
+        if used:
+            raise CategoryInUseError(label, used)
+        current = self.load_categories()
+        target = self._category_for_sub(current, category)
+        if name not in target.subs:
+            raise KeyError(label)
+        target.subs = [x for x in target.subs if x != name]
+        self._write_categories(current)
 
 
 class UserRepository:

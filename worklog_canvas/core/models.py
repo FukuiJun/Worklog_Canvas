@@ -100,6 +100,7 @@ class Task:
     history: list[ProgressEntry] = field(default_factory=list)
     memo: str = ""
     task_type: str = TYPE_WORK  # 種類
+    subcategory: str = ""  # サブカテゴリ（カテゴリの下の分類。カテゴリがあるときだけ）
 
     @property
     def is_work(self) -> bool:
@@ -107,7 +108,13 @@ class Task:
         return self.task_type == TYPE_WORK
 
     def clear_work_fields(self) -> None:
-        """日常・定期タスクは進捗率・日付・予定工数を持たない。"""
+        """日常・定期タスクは進捗率・日付・予定工数・ステータス・優先度を持たない。
+
+        ステータスは常に「進行中」（終わりのない作業なので、いつでも作業バーに使える）、優先度は「中」にしておく。
+        """
+        self.status = STATUS_IN_PROGRESS
+        self.priority = "中"
+        self.start_date = self.done_date = None
         self.planned_end = self.deadline = None
         self.estimate_hours = None
         self.progress = 0
@@ -147,8 +154,8 @@ class Task:
 
     @property
     def is_open(self) -> bool:
-        """未完了か。"""
-        return self.status != STATUS_DONE
+        """未完了か。日常・定期タスクは完了させないので常に未完了。"""
+        return not self.is_work or self.status != STATUS_DONE
 
     def validate(self) -> None:
         if not self.name or not self.name.strip():
@@ -161,6 +168,8 @@ class Task:
             raise ValidationError("優先度", f"優先度が不正です: {self.priority}")
         if self.task_type not in TASK_TYPES:
             raise ValidationError("種類", f"種類が不正です: {self.task_type}")
+        if self.subcategory and not self.category:
+            raise ValidationError("サブカテゴリ", "サブカテゴリはカテゴリを選んでから指定してください")
         validate_progress(self.progress)
         validate_estimate(self.estimate_hours)
 
@@ -180,6 +189,7 @@ class Task:
             "進捗履歴": [e.to_dict() for e in self.history],
             "メモ": self.memo,
             "種類": self.task_type,
+            "サブカテゴリ": self.subcategory,
         }
 
     @classmethod
@@ -200,6 +210,7 @@ class Task:
             history=[ProgressEntry.from_dict(e) for e in d.get("進捗履歴", [])],
             memo=d.get("メモ") or "",
             task_type=d.get("種類") or TYPE_WORK,  # 種類のない古いデータは業務タスク
+            subcategory=d.get("サブカテゴリ") or "",
         )
 
 
@@ -348,8 +359,10 @@ class WeeklyNote:
 
 @dataclass
 class Category:
+    """カテゴリ。subs はその下のサブカテゴリ名（色はカテゴリと同じ。1段だけ）。"""
     name: str
     color: str
+    subs: list[str] = field(default_factory=list)
 
     def validate(self) -> None:
         if not self.name or not self.name.strip():
@@ -358,11 +371,11 @@ class Category:
             raise ValidationError("色", "色は#RRGGBB形式で指定してください")
 
     def to_dict(self) -> dict:
-        return {"カテゴリ名": self.name, "色": self.color}
+        return {"カテゴリ名": self.name, "色": self.color, "サブカテゴリ": list(self.subs)}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Category":
-        return cls(name=d["カテゴリ名"], color=d["色"])
+        return cls(name=d["カテゴリ名"], color=d["色"], subs=[str(x) for x in d.get("サブカテゴリ") or []])
 
 
 @dataclass

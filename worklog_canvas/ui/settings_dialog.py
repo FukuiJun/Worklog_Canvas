@@ -1,10 +1,10 @@
-"""設定画面: 表示名、データフォルダ、タイムラインの表示時間帯（Q-05）、カテゴリの変更・削除（仕様 5.2）。"""
+"""設定画面: 表示名、データフォルダ、タイムラインの表示時間帯（Q-05）、カテゴリ・サブカテゴリの変更・削除（仕様 5.2）。"""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QInputDialog,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QMessageBox, QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from .. import __version__
@@ -12,7 +12,7 @@ from ..core import timeutil as tu
 from ..core.models import ValidationError
 from ..core.repository import CategoryInUseError
 from .state import AppState
-from .task_dialog import CategoryDialog
+from .task_dialog import CategoryDialog, add_subcategory_dialog
 from .widgets import color_icon, error_label, show_error
 
 
@@ -63,25 +63,30 @@ class SettingsDialog(QDialog):
 
         cat_group = QGroupBox("カテゴリ（全員共通）")
         cl = QVBoxLayout(cat_group)
-        self.cat_list = QListWidget()
-        self.cat_list.setFixedHeight(150)
+        self.cat_list = QTreeWidget()  # カテゴリの下にサブカテゴリをぶら下げる
+        self.cat_list.setHeaderHidden(True)
+        self.cat_list.setFixedHeight(180)
         cl.addWidget(self.cat_list)
         row = QHBoxLayout()
-        self.btn_cat_add = QPushButton("追加…")
+        self.btn_cat_add = QPushButton("カテゴリを追加…")
+        self.btn_sub_add = QPushButton("サブカテゴリを追加…")
+        self.btn_sub_add.setToolTip("選んでいるカテゴリの下に追加します")
         self.btn_cat_rename = QPushButton("名前を変更…")
         self.btn_cat_delete = QPushButton("削除")
-        for b in (self.btn_cat_add, self.btn_cat_rename, self.btn_cat_delete):
+        for b in (self.btn_cat_add, self.btn_sub_add, self.btn_cat_rename, self.btn_cat_delete):
             b.setEnabled(editable)
             row.addWidget(b)
         row.addStretch()
         cl.addLayout(row)
-        hint = QLabel("名前の変更と削除は、そのカテゴリを使うタスクが自分のデータに0件のときだけできます。")
+        hint = QLabel("名前の変更と削除は、そのカテゴリ（サブカテゴリ）を使うタスクが自分のデータに0件のときだけできます。"
+                      "サブカテゴリの色はカテゴリと同じです。")
         hint.setWordWrap(True)
         hint.setStyleSheet("color:#666;")
         cl.addWidget(hint)
         self.cat_err = error_label()
         cl.addWidget(self.cat_err)
         self.btn_cat_add.clicked.connect(self._add_category)
+        self.btn_sub_add.clicked.connect(self._add_subcategory)
         self.btn_cat_rename.clicked.connect(self._rename_category)
         self.btn_cat_delete.clicked.connect(self._delete_category)
 
@@ -98,27 +103,59 @@ class SettingsDialog(QDialog):
         self._fill_categories()
 
     # --- カテゴリ ---
-    def _fill_categories(self) -> None:
+    def _fill_categories(self, select: tuple[str, str | None] | None = None) -> None:
         self.state.reload_categories()
         self.cat_list.clear()
-        counts = {}
+        counts: dict[tuple[str, str | None], int] = {}
         for t in self.state.own_repo.tasks:
-            counts[t.category] = counts.get(t.category, 0) + 1
+            counts[(t.category, None)] = counts.get((t.category, None), 0) + 1
+            if t.subcategory:
+                counts[(t.category, t.subcategory)] = counts.get((t.category, t.subcategory), 0) + 1
         for name, color in self.state.category_colors.items():
-            n = counts.get(name, 0)
-            item = QListWidgetItem(color_icon(color), f"{name}　（自分のタスク {n} 件）")
-            item.setData(Qt.UserRole, name)
-            self.cat_list.addItem(item)
+            item = QTreeWidgetItem([f"{name}　（自分のタスク {counts.get((name, None), 0)} 件）"])
+            item.setIcon(0, color_icon(color))
+            item.setData(0, Qt.UserRole, name)
+            item.setData(0, Qt.UserRole + 1, None)
+            self.cat_list.addTopLevelItem(item)
+            for sub in self.state.subcategories.get(name, []):
+                child = QTreeWidgetItem([f"{sub}　（{counts.get((name, sub), 0)} 件）"])
+                child.setData(0, Qt.UserRole, name)
+                child.setData(0, Qt.UserRole + 1, sub)
+                item.addChild(child)
+                if select == (name, sub):
+                    self.cat_list.setCurrentItem(child)
+            if select == (name, None):
+                self.cat_list.setCurrentItem(item)
+        self.cat_list.expandAll()
+
+    def _selected(self) -> tuple[str, str | None] | None:
+        """選んでいる行（カテゴリ名, サブカテゴリ名 or None）。"""
+        item = self.cat_list.currentItem()
+        return (item.data(0, Qt.UserRole), item.data(0, Qt.UserRole + 1)) if item else None
 
     def _selected_category(self) -> str | None:
-        item = self.cat_list.currentItem()
-        return item.data(Qt.UserRole) if item else None
+        sel = self._selected()
+        return sel[0] if sel and sel[1] is None else None
+
+    def _add_subcategory(self) -> None:
+        sel = self._selected()
+        if not sel:
+            show_error(self.cat_err, "サブカテゴリを追加するカテゴリを選んでください")
+            return
+        name = add_subcategory_dialog(self, self.state, sel[0])
+        if name:
+            show_error(self.cat_err, None)
+            self._fill_categories((sel[0], name))
 
     def _add_category(self) -> None:
         if CategoryDialog(self.state, self).exec():
             self._fill_categories()
 
     def _rename_category(self) -> None:
+        sel = self._selected()
+        if sel and sel[1] is not None:
+            self._rename_subcategory(*sel)
+            return
         name = self._selected_category()
         if not name:
             return
@@ -133,13 +170,42 @@ class SettingsDialog(QDialog):
         show_error(self.cat_err, None)
         self._fill_categories()
 
+    def _rename_subcategory(self, cat: str, sub: str) -> None:
+        new, ok = QInputDialog.getText(self, "サブカテゴリ名の変更", "新しいサブカテゴリ名", text=sub)
+        if not ok or new.strip() == sub:
+            return
+        try:
+            self.state.folder.rename_subcategory(cat, sub, new.strip(), self.state.own_repo.tasks)
+        except (CategoryInUseError, ValidationError, KeyError, OSError) as e:
+            show_error(self.cat_err, str(e) if not isinstance(e, KeyError) else "サブカテゴリが見つかりません")
+            return
+        show_error(self.cat_err, None)
+        self._fill_categories((cat, new.strip()))
+
+    def _delete_subcategory(self, cat: str, sub: str) -> None:
+        if QMessageBox.question(self, "サブカテゴリの削除",
+                                f"サブカテゴリ「{cat} › {sub}」を削除しますか？") != QMessageBox.Yes:
+            return
+        try:
+            self.state.folder.delete_subcategory(cat, sub, self.state.own_repo.tasks)
+        except (CategoryInUseError, KeyError, OSError) as e:
+            show_error(self.cat_err, str(e) if not isinstance(e, KeyError) else "サブカテゴリが見つかりません")
+            return
+        show_error(self.cat_err, None)
+        self._fill_categories((cat, None))
+
     def _delete_category(self) -> None:
+        sel = self._selected()
+        if sel and sel[1] is not None:
+            self._delete_subcategory(*sel)
+            return
         name = self._selected_category()
         if not name:
             return
         if QMessageBox.question(self, "カテゴリの削除",
                                 f"カテゴリ「{name}」を削除しますか？\n（他のメンバーのタスクで使われている場合、"
-                                "その人の画面では「（未分類）」の色で表示されます）") != QMessageBox.Yes:
+                                "その人の画面では「（未分類）」の色で表示されます）\n"
+                                "サブカテゴリもいっしょに削除されます。") != QMessageBox.Yes:
             return
         try:
             self.state.folder.delete_category(name, self.state.own_repo.tasks)

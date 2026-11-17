@@ -63,6 +63,14 @@ QPushButton:disabled, QToolButton:disabled {{ color: #9AA7B3; background: #F4F7F
 QPushButton:default {{ border-color: #9FD3EE; }}
 QPushButton[accent="true"] {{ background: {ACCENT_SOFT}; border: 1px solid {ACCENT_SOFT}; color: {ACCENT_TEXT}; font-weight: bold; }}
 QPushButton[accent="true"]:hover {{ background: #CDEBFA; border-color: #CDEBFA; }}
+QToolButton#dateClear {{ background: transparent; border: none; border-radius: 13px; padding: 0; min-width: 0; }}
+QToolButton#dateClear:hover {{ background: #E6F3FB; }}
+QToolButton#dateClear:pressed {{ background: {ACCENT_SOFT}; }}
+QRadioButton {{ spacing: 6px; }}
+QRadioButton::indicator {{ width: 14px; height: 14px; border: 1px solid #B8C7D3; border-radius: 8px; background: {WHITE}; }}
+QRadioButton::indicator:hover {{ border-color: {ACCENT}; }}
+QRadioButton::indicator:checked {{ border: 1px solid #1E88C8; background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0 #1E88C8, stop:0.5 #1E88C8, stop:0.6 {WHITE}, stop:1 {WHITE}); }}
+QRadioButton::indicator:disabled {{ background: #F4F7FA; border-color: #D5DEE6; }}
 QToolButton:checked {{ background: {ACCENT_SOFT}; color: {ACCENT_TEXT}; font-weight: bold; border-color: #BFE3F5; }}
 
 QLineEdit, QPlainTextEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox, QTimeEdit {{

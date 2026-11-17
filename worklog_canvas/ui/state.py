@@ -34,6 +34,7 @@ class AppState(QObject):
         self.locked_by: str | None = None  # 他のPCで使用中のため閲覧モードのとき、その相手
         self.editor = WorklogEditor(repo)
         self.category_colors: dict[str, str] = {}
+        self.subcategories: dict[str, list[str]] = {}  # カテゴリ名 → サブカテゴリ名
         repo.on_save_state = lambda _r: self.save_state_changed.emit()
         self.reload_categories()
 
@@ -61,7 +62,9 @@ class AppState(QObject):
         """categories.json を読み直す。読めなければ（他の人が保存中に壊れた等）前の色のまま知らせる。"""
         from ..core.storage import JsonFormatError
         try:
-            self.category_colors = self.folder.category_colors()
+            cats = self.folder.load_categories()
+            self.category_colors = {c.name: c.color for c in cats}
+            self.subcategories = {c.name: list(c.subs) for c in cats}
         except (JsonFormatError, OSError) as e:
             self.error.emit(f"カテゴリ（categories.json）を読み込めませんでした: {e}")
             return
