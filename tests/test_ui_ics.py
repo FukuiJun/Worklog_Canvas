@@ -163,3 +163,17 @@ def test_appointments_hidden_when_viewing_other(win, tmp_path):
     assert win.timeline.canvas.appointment_rects() == []
     win.view_user("fukui")
     assert win.timeline.canvas.appointment_rects()
+
+
+def test_month_view_shows_appointments(win, tmp_path):
+    """月表示でも、読み込んだ予定表ファイルの予定を日付のマスに出す（終日の予定は先頭）。"""
+    tab = win.timeline
+    tab.load_ics(_ics_copy(tmp_path))
+    tab.set_mode("month")
+    mv = tab.month_view
+    texts = [c.text for c in mv.chips_for(dt.date(2026, 11, 10)) if c.kind == "appointment"]
+    assert "10:00 設計レビュー" in texts
+    day12 = mv.chips_for(dt.date(2026, 11, 12))
+    assert (day12[0].kind, day12[0].text) == ("appointment", "終日 部署イベント（終日）")
+    tab.set_mode("week")  # 週表示に戻すと、その週の予定に戻る
+    assert tab.canvas.appointments and all(set(a.days()) & set(tab.canvas.dates) for a in tab.canvas.appointments)

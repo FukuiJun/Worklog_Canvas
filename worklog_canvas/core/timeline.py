@@ -1,6 +1,7 @@
 """タイムライン操作の計算（F-02）。画面の座標計算とは分け、分単位で扱う。"""
 from __future__ import annotations
 
+import calendar
 import copy
 import datetime as _dt
 from dataclasses import dataclass, replace
@@ -132,13 +133,31 @@ def sub_labels(w: Worklog, tasks_by_id: dict[str, Task]) -> list[str]:
     return [item_label(s.kind, s.task_id, s.title, tasks_by_id) for s in w.subs]
 
 
+def month_dates(anchor: _dt.date) -> list[_dt.date]:
+    """anchor の月を含む週（月〜日）をすべて並べた日付（月表示のマス。4〜6週）。"""
+    first = anchor.replace(day=1)
+    last = first.replace(day=calendar.monthrange(first.year, first.month)[1])
+    return tu.date_range(tu.week_start(first), tu.week_start(last) + _dt.timedelta(days=6))
+
+
 def visible_dates(anchor: _dt.date, mode: str) -> list[_dt.date]:
-    """mode="day" なら anchor の1日、"week" なら anchor を含む月〜日。"""
+    """mode="day" なら anchor の1日、"week" なら anchor を含む月〜日、"month" なら月表示のマスの日付。"""
     if mode == "day":
         return [anchor]
+    if mode == "month":
+        return month_dates(anchor)
     start = tu.week_start(anchor)
     return tu.date_range(start, start + _dt.timedelta(days=6))
 
 
+def add_months(d: _dt.date, months: int) -> _dt.date:
+    """months か月後の同じ日（その月にない日は月末）。"""
+    y, m = divmod(d.month - 1 + months, 12)
+    year, month = d.year + y, m + 1
+    return d.replace(year=year, month=month, day=min(d.day, calendar.monthrange(year, month)[1]))
+
+
 def step_anchor(anchor: _dt.date, mode: str, direction: int) -> _dt.date:
+    if mode == "month":
+        return add_months(anchor.replace(day=1), direction)
     return anchor + _dt.timedelta(days=direction * (1 if mode == "day" else 7))
