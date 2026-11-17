@@ -264,9 +264,8 @@ def test_popup_is_not_qt_popup_and_accepts_japanese_input(win):
     def act(p):
         seen["popup_flag"] = (p.windowFlags() & Qt.WindowType_Mask) == Qt.Popup
         seen["im"] = p.edit.testAttribute(Qt.WA_InputMethodEnabled)
-        # IME で変換中 → 確定 の流れを送る
-        QApplication.sendEvent(p.edit, QInputMethodEvent("ひるやすみ", []))
-        ev = QInputMethodEvent("", [])
+        # IME で確定した文字を送る
+        ev = QInputMethodEvent()
         ev.setCommitString("昼休み")
         QApplication.sendEvent(p.edit, ev)
         seen["text"] = p.edit.text()

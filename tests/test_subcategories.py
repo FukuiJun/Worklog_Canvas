@@ -300,32 +300,43 @@ def test_progress_typed_number_is_saved(win):
 
 
 def test_calendar_hover_marks_the_day_under_mouse(win):
+    """カレンダーでマウスを置いた日を淡く色づける。週の始まり（日曜・月曜）はPCの設定によらず正しく日付を求める。"""
     from PySide6.QtCore import QDate, QEvent, QPointF, Qt
     from PySide6.QtGui import QMouseEvent
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QCalendarWidget
     from worklog_canvas.ui.widgets import _CalendarHover
     dlg = _dialog(win)
-    cal = dlg.start_date.edit.calendarWidget()
-    cal.setCurrentPage(2026, 11)
-    cal.resize(320, 240)
-    cal.show()
+    popup_cal = dlg.start_date.edit.calendarWidget()
+    assert any(isinstance(c, _CalendarHover) for c in popup_cal.children())  # 日付欄のカレンダーに付いている
+    for first_day in (Qt.Sunday, Qt.Monday):
+        cal = QCalendarWidget()
+        cal.setFirstDayOfWeek(first_day)
+        hover = _CalendarHover(cal)
+        cal.setCurrentPage(2026, 11)
+        cal.resize(360, 260)
+        cal.show()
+        QApplication.processEvents()
+        view = hover.view
+        days = []
+        pos_of = {}
+        for r in range(view.model().rowCount()):
+            for c in range(view.model().columnCount()):
+                pos = view.visualRect(view.model().index(r, c)).center()
+                d = hover.date_at(pos)
+                if d is not None:
+                    days.append(d)
+                    pos_of[d.toString("yyyy-MM-dd")] = pos
+        # 42日が1日ずつ続き、前の月の末と次の月の初めも正しい日付になる
+        assert len(days) == 42 and all(days[k].addDays(1) == days[k + 1] for k in range(41)), first_day
+        assert {"2026-10-31", "2026-11-01", "2026-11-30", "2026-12-01"} <= set(pos_of)
+        pos = pos_of["2026-11-12"]
+        ev = QMouseEvent(QEvent.MouseMove, QPointF(pos), QPointF(view.viewport().mapToGlobal(pos)),
+                         Qt.NoButton, Qt.NoButton, Qt.NoModifier)
+        QApplication.sendEvent(view.viewport(), ev)
+        assert hover.hovered == QDate(2026, 11, 12)
+        assert cal.dateTextFormat(QDate(2026, 11, 12)).background().color().name().upper() == "#E3F2FB"
+        QApplication.sendEvent(view.viewport(), QEvent(QEvent.Leave))
+        assert hover.hovered is None and cal.dateTextFormat(QDate(2026, 11, 12)).background().style() == Qt.NoBrush
+        cal.close()
+        cal.deleteLater()
     QApplication.processEvents()
-    [hover] = [c for c in cal.children() if isinstance(c, _CalendarHover)]
-    view = hover.view
-    cells = {}
-    for r in range(view.model().rowCount()):
-        for c in range(view.model().columnCount()):
-            pos = view.visualRect(view.model().index(r, c)).center()
-            d = hover.date_at(pos)
-            if d is not None:
-                cells[d.toString("yyyy-MM-dd")] = pos
-    assert {"2026-10-26", "2026-11-01", "2026-11-30", "2026-12-06"} <= set(cells)  # 前後の月の日も正しい
-    pos = cells["2026-11-12"]
-    ev = QMouseEvent(QEvent.MouseMove, QPointF(pos), QPointF(view.viewport().mapToGlobal(pos)),
-                     Qt.NoButton, Qt.NoButton, Qt.NoModifier)
-    QApplication.sendEvent(view.viewport(), ev)
-    assert hover.hovered == QDate(2026, 11, 12)
-    assert cal.dateTextFormat(QDate(2026, 11, 12)).background().color().name().upper() == "#E3F2FB"
-    QApplication.sendEvent(view.viewport(), QEvent(QEvent.Leave))
-    assert hover.hovered is None and cal.dateTextFormat(QDate(2026, 11, 12)).background().style() == Qt.NoBrush
-    cal.hide()
