@@ -7,7 +7,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
-from PySide6.QtCore import QEvent, QPointF, Qt, QTimer  # noqa: E402
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QTimer  # noqa: E402
 from PySide6.QtGui import QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
@@ -253,3 +253,41 @@ def test_task_list_overdue_colors_and_filters(win):
     assert [t.id for t in tab.filtered_tasks()] == ["T-0001"]
     tab.f_category.setCurrentText("（未分類）")
     assert "T-0001" not in {t.id for t in tab.filtered_tasks()}
+
+
+def test_popup_is_not_qt_popup_and_accepts_japanese_input(win):
+    """入力ポップアップは日本語入力（IME）を使える窓にする（Qt.Popup は Windows で IME が効かない）。"""
+    from PySide6.QtGui import QInputMethodEvent
+    c = win.timeline.canvas
+    seen = {}
+
+    def act(p):
+        seen["popup_flag"] = (p.windowFlags() & Qt.WindowType_Mask) == Qt.Popup
+        seen["im"] = p.edit.testAttribute(Qt.WA_InputMethodEnabled)
+        # IME で変換中 → 確定 の流れを送る
+        QApplication.sendEvent(p.edit, QInputMethodEvent("ひるやすみ", []))
+        ev = QInputMethodEvent("", [])
+        ev.setCommitString("昼休み")
+        QApplication.sendEvent(p.edit, ev)
+        seen["text"] = p.edit.text()
+        QTest.keyClick(p.edit, Qt.Key_Return)
+    with_popup(act)
+    drag(c, _pt(c, 2, h("12:00")), _pt(c, 2, h("13:00")))
+    assert seen == {"popup_flag": False, "im": True, "text": "昼休み"}
+    [w] = win.state.repo.worklogs
+    assert (w.kind, w.title) == (KIND_ONEOFF, "昼休み")
+
+
+def test_popup_closes_on_outside_click(win):
+    c = win.timeline.canvas
+
+    def act(p):
+        outside = p.frameGeometry().bottomRight() + QPoint(40, 40)
+        local = c.mapFromGlobal(outside)
+        ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(local), QPointF(outside), Qt.LeftButton, Qt.LeftButton,
+                         Qt.NoModifier)
+        QApplication.sendEvent(c, ev)
+        assert not p.isVisible()
+    with_popup(act)
+    drag(c, _pt(c, 0, h("10:00")), _pt(c, 0, h("11:00")))
+    assert win.state.repo.worklogs == []

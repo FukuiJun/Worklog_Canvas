@@ -63,6 +63,7 @@ QPushButton:disabled, QToolButton:disabled {{ color: #9AA7B3; background: #F4F7F
 QPushButton:default {{ border-color: #9FD3EE; }}
 QPushButton[accent="true"] {{ background: {ACCENT_SOFT}; border: 1px solid {ACCENT_SOFT}; color: {ACCENT_TEXT}; font-weight: bold; }}
 QPushButton[accent="true"]:hover {{ background: #CDEBFA; border-color: #CDEBFA; }}
+QDialog#entryPopup {{ background: {BACKGROUND}; border: 1px solid #C9D9E5; border-radius: 0; }}
 QToolButton#dateClear {{ background: transparent; border: none; border-radius: 13px; padding: 0; min-width: 0; }}
 QToolButton#dateClear:hover {{ background: #E6F3FB; }}
 QToolButton#dateClear:pressed {{ background: {ACCENT_SOFT}; }}
