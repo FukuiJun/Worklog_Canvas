@@ -231,6 +231,7 @@ exe での体感の確認は、作ったデータフォルダを指定して起�
 | `build.bat` | exe を作るバッチファイル |
 | `scripts/make_sample_data.py` | サンプルデータの生成 |
 | `scripts/make_perf_data.py` / `scripts/measure_perf.py` | 性能確認用データの生成と計測 |
+| `scripts/make_icon.py` | アイコンの元絵 `worklog_canvas/ui/resources/app_icon.svg` から `app_icon.ico`（16〜256px）を作る。SVG を直したらこれを実行して ico もコミットする |
 | `sample_data/` | サンプルデータ（3名分） |
 
 ## データフォルダの構成
