@@ -2,3 +2,4 @@
 *.bat -text
 *.ics -text
 tests/data/* -text
+*.ico binary
