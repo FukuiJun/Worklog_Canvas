@@ -1,21 +1,20 @@
-"""定期タスク（F-09）の登録・編集ダイアログと、一覧の管理ダイアログ。"""
+"""定期タスク（F-09）の登録・編集ダイアログ。"""
 from __future__ import annotations
 
 import copy
 import datetime as _dt
 
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import QDate
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QRadioButton,
-    QSpinBox, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QPlainTextEdit, QRadioButton, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from ..core import recurring as rc
 from ..core import timeline as tl
 from ..core.models import KIND_ONEOFF, KIND_TASK, ONEOFF_TITLE_MAX, ValidationError
 from .state import AppState
-from .widgets import OptionalDateEdit, TimeCombo, color_icon, error_label, show_error
+from .widgets import OptionalDateEdit, TimeCombo, color_icon, enable_calendar_hover, error_label, show_error
 
 
 class RecurrenceFields(QWidget):
@@ -57,6 +56,7 @@ class RecurrenceFields(QWidget):
         form.addRow("日にち", self.month_day)
         self.start_date = QDateEdit()
         self.start_date.setCalendarPopup(True)
+        enable_calendar_hover(self.start_date)
         self.start_date.setDisplayFormat("yyyy-MM-dd")
         form.addRow("開始日", self.start_date)
         self.end_date = OptionalDateEdit(today=state.today)
@@ -213,80 +213,3 @@ class RecurringDialog(QDialog):
 
 def item_label(state: AppState, it: rc.RecurringItem) -> str:
     return tl.item_label(it.kind, it.task_id, it.title, state.tasks_by_id())
-
-
-class RecurringListDialog(QDialog):
-    """登録した定期タスクの一覧（追加・編集・削除）。"""
-
-    def __init__(self, state: AppState, parent=None):
-        super().__init__(parent)
-        self.state = state
-        self.setWindowTitle("定期タスク")
-        self.list = QListWidget()
-        self.list.setMinimumSize(520, 260)
-        self.list.itemDoubleClicked.connect(lambda _i: self.edit())
-        self.btn_add = QPushButton("＋ 登録")
-        self.btn_add.setProperty("accent", True)
-        self.btn_edit, self.btn_del = QPushButton("編集"), QPushButton("削除")
-        close = QPushButton("閉じる")
-        row = QHBoxLayout()
-        for b in (self.btn_add, self.btn_edit, self.btn_del):
-            row.addWidget(b)
-        row.addStretch()
-        row.addWidget(close)
-        hint = QLabel("決まった時間の作業（朝会など）を登録すると、該当する日のタイムラインに「定期の予定」として表示されます。")
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #5B6B7B;")
-        lay = QVBoxLayout(self)
-        lay.addWidget(hint)
-        lay.addWidget(self.list, 1)
-        lay.addLayout(row)
-        self.btn_add.clicked.connect(self.add)
-        self.btn_edit.clicked.connect(self.edit)
-        self.btn_del.clicked.connect(self.delete)
-        close.clicked.connect(self.accept)
-        for b in (self.btn_add, self.btn_edit, self.btn_del):
-            b.setEnabled(not state.readonly)
-        self.refresh()
-
-    def refresh(self) -> None:
-        self.list.clear()
-        tasks = self.state.tasks_by_id()
-        for it in self.state.repo.recurring:
-            color = self.state.sub_color(it.kind, it.task_id, tasks)
-            row = QListWidgetItem(color_icon(color), f"{item_label(self.state, it)}　—　{it.describe()}")
-            row.setData(Qt.UserRole, it.id)
-            if it.end_date:
-                row.setToolTip(f"{it.start_date}〜{it.end_date}")
-            self.list.addItem(row)
-        if not self.state.repo.recurring:
-            empty = QListWidgetItem("（まだ登録されていません）")
-            empty.setFlags(Qt.NoItemFlags)
-            self.list.addItem(empty)
-
-    def _selected(self) -> str | None:
-        it = self.list.currentItem()
-        return it.data(Qt.UserRole) if it else None
-
-    def add(self) -> None:
-        if RecurringDialog(self.state, None, self).exec():
-            self.refresh()
-
-    def edit(self) -> None:
-        rid = self._selected()
-        if rid and not self.state.readonly:
-            if RecurringDialog(self.state, self.state.repo.get_recurring(rid), self).exec():
-                self.refresh()
-
-    def delete(self) -> None:
-        rid = self._selected()
-        if not rid or self.state.readonly:
-            return
-        it = self.state.repo.get_recurring(rid)
-        if QMessageBox.question(self, "定期タスクの削除",
-                                f"「{item_label(self.state, it)}（{it.describe()}）」を削除しますか？\n"
-                                "記録済みの作業バーは消えません。") != QMessageBox.Yes:
-            return
-        self.state.repo.delete_recurring(rid)
-        self.state.worklogs_changed.emit()
-        self.refresh()

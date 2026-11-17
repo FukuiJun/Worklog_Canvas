@@ -3,13 +3,16 @@
 - ↑↓ で候補（未完了タスク）を選んで Enter、または候補をクリック → メイン=タスク
 - 文字を入力して Enter（候補を選んでいない状態）→ メイン=単発作業（入力文字がタイトル）
 - Esc → 作成を取り消す
+
+Qt.Popup の窓は Windows で日本語入力（IME）が使えないため、枠なしの通常の窓にして、
+外をクリックしたら閉じる動きを自分で付けている。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QEvent, Qt
-from PySide6.QtWidgets import QDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout
 
 from ..core import timeline as tl
 from ..core import timeutil as tu
@@ -24,10 +27,29 @@ class EntryResult:
     title: str = ""
 
 
+class _OutsideClickCloser(QObject):
+    """ポップアップの外をクリックしたら閉じる（Qt.Popup と同じ動き）。開いている間だけ付ける。"""
+
+    def __init__(self, popup: QDialog):
+        super().__init__(popup)
+        self.popup = popup
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.MouseButtonPress and self.popup.isVisible():
+            pos = ev.globalPosition().toPoint()
+            if not self.popup.frameGeometry().contains(pos):
+                self.popup.reject()
+                return True
+        return False
+
+
 class EntryPopup(QDialog):
     def __init__(self, tasks: list[Task], color_of, start: int, end: int, parent=None):
-        super().__init__(parent, Qt.Popup)
+        # 枠なしの窓（Qt.Popup にしない: Windows で日本語入力ができなくなるため）
+        super().__init__(parent, Qt.Tool | Qt.FramelessWindowHint)
         self.setObjectName("entryPopup")
+        self.setAttribute(Qt.WA_InputMethodEnabled, True)
+        self._closer = _OutsideClickCloser(self)
         self.result_value: EntryResult | None = None
         self._tasks = tl.sort_open_tasks(tasks)
         self._color_of = color_of
@@ -39,6 +61,7 @@ class EntryPopup(QDialog):
         head.setStyleSheet("font-weight: bold;")
         lay.addWidget(head)
         self.edit = QLineEdit()
+        self.edit.setAttribute(Qt.WA_InputMethodEnabled, True)
         self.edit.setPlaceholderText("タスク名で絞り込み／単発作業のタイトルを入力")
         self.edit.setMaxLength(ONEOFF_TITLE_MAX + 20)
         lay.addWidget(self.edit)
@@ -61,6 +84,29 @@ class EntryPopup(QDialog):
         self.list.itemActivated.connect(self._choose_item)
         self._refilter("")
         self.edit.setFocus()
+
+    # --- 開く・閉じる ---
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        QApplication.instance().installEventFilter(self._closer)
+        self.raise_()
+        self.activateWindow()  # 窓を前面で有効にして、日本語入力を使えるようにする
+        QTimer.singleShot(0, self._focus_edit)
+
+    def _focus_edit(self) -> None:
+        if self.isVisible():
+            self.activateWindow()
+            self.edit.setFocus(Qt.ActiveWindowFocusReason)
+
+    def done(self, r):
+        QApplication.instance().removeEventFilter(self._closer)
+        super().done(r)
+
+    def keyPressEvent(self, ev):
+        if ev.key() == Qt.Key_Escape:
+            self.reject()
+            return
+        super().keyPressEvent(ev)
 
     # --- 候補 ---
     def _refilter(self, text: str) -> None:

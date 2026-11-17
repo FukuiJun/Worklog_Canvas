@@ -154,3 +154,19 @@ def test_log_rotation_settings(tmp_path):
     assert "起動" in (tmp_path / "app.log").read_text("utf-8")
     logger.removeHandler(handler)
     handler.close()
+
+
+def test_view_range_default_is_7_to_20_and_old_default_is_migrated(tmp_path):
+    import json
+    from worklog_canvas.core.settings import Settings
+    assert Settings().view_range == (7 * 60, 20 * 60)
+    old = tmp_path / "old.json"
+    old.write_text(json.dumps({"view_start": "08:00", "view_end": "20:00"}), encoding="utf-8")
+    assert Settings.load(old).view_start == "07:00"  # 以前の既定のままなら新しい既定へ
+    custom = tmp_path / "custom.json"
+    custom.write_text(json.dumps({"view_start": "09:00", "view_end": "18:00"}), encoding="utf-8")
+    assert Settings.load(custom).view_range == (9 * 60, 18 * 60)  # 自分で変えた時刻はそのまま
+    s = Settings.load(old)
+    s.view_start = "08:00"  # 新しい版で 8:00 を選び直したら、次の起動でも 8:00
+    s.save(old)
+    assert Settings.load(old).view_start == "08:00"

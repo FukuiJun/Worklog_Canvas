@@ -17,12 +17,12 @@ STATUS_ON_HOLD = "保留"
 STATUS_DONE = "完了"
 STATUSES = (STATUS_NOT_STARTED, STATUS_IN_PROGRESS, STATUS_ON_HOLD, STATUS_DONE)
 
-PRIORITIES = ("高", "中", "低")
+PRIORITIES = ("最高", "高", "中", "低")
 
 # タスクの種類
 TYPE_WORK = "業務"  # 業務タスク: 進捗率・完了予定日・期限を持ち、完了させる
-TYPE_DAILY = "日常"  # 日常タスク: メール対応・雑務など終わりのない日々の作業（進捗率・日付・予定工数なし）
-TYPE_RECURRING = "定期"  # 定期タスク: 繰り返しの時間帯（定期の予定）を持つ（進捗率・日付・予定工数なし）
+TYPE_DAILY = "日常"  # 日常タスク: メール対応・雑務など終わりのない日々の作業（進捗率・日付なし）
+TYPE_RECURRING = "定期"  # 定期タスク: 繰り返しの時間帯（定期の予定）を持つ（進捗率・日付なし）
 TASK_TYPES = (TYPE_WORK, TYPE_DAILY, TYPE_RECURRING)
 
 KIND_TASK = "タスク"
@@ -39,7 +39,6 @@ ONEOFF_TITLE_MAX = 50
 MAX_SUBTASKS = 3  # 1つの作業バーに付けられるサブタスクの数（メインと合わせて4つ）
 WEEKLY_NOTE_MAX = 400
 PROGRESS_STEP = 5
-ESTIMATE_STEP = 0.25
 
 _COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
@@ -60,14 +59,6 @@ def validate_progress(value: int) -> int:
     if not (0 <= value <= 100) or value % PROGRESS_STEP != 0:
         raise ValidationError("進捗率", "進捗率は0〜100の5刻みで入力してください")
     return value
-
-
-def validate_estimate(value: float | None) -> float | None:
-    if value is None:
-        return None
-    if value < 0 or abs(value / ESTIMATE_STEP - round(value / ESTIMATE_STEP)) > 1e-9:
-        raise ValidationError("予定工数", "予定工数は0以上の0.25刻みで入力してください")
-    return float(value)
 
 
 # --- タスク ---------------------------------------------------------------
@@ -95,7 +86,6 @@ class Task:
     planned_end: _dt.date | None = None  # 完了予定日
     deadline: _dt.date | None = None  # 期限
     done_date: _dt.date | None = None  # 完了日
-    estimate_hours: float | None = None  # 予定工数
     progress: int = 0
     history: list[ProgressEntry] = field(default_factory=list)
     memo: str = ""
@@ -108,7 +98,7 @@ class Task:
         return self.task_type == TYPE_WORK
 
     def clear_work_fields(self) -> None:
-        """日常・定期タスクは進捗率・日付・予定工数・ステータス・優先度を持たない。
+        """日常・定期タスクは進捗率・日付・ステータス・優先度を持たない。
 
         ステータスは常に「進行中」（終わりのない作業なので、いつでも作業バーに使える）、優先度は「中」にしておく。
         """
@@ -116,7 +106,6 @@ class Task:
         self.priority = "中"
         self.start_date = self.done_date = None
         self.planned_end = self.deadline = None
-        self.estimate_hours = None
         self.progress = 0
         self.history = []
 
@@ -171,7 +160,6 @@ class Task:
         if self.subcategory and not self.category:
             raise ValidationError("サブカテゴリ", "サブカテゴリはカテゴリを選んでから指定してください")
         validate_progress(self.progress)
-        validate_estimate(self.estimate_hours)
 
     def to_dict(self) -> dict:
         return {
@@ -184,7 +172,6 @@ class Task:
             "完了予定日": tu.format_date(self.planned_end),
             "期限": tu.format_date(self.deadline),
             "完了日": tu.format_date(self.done_date),
-            "予定工数": self.estimate_hours,
             "進捗率": self.progress,
             "進捗履歴": [e.to_dict() for e in self.history],
             "メモ": self.memo,
@@ -194,7 +181,6 @@ class Task:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Task":
-        est = d.get("予定工数")
         return cls(
             id=d["id"],
             name=d["タスク名"],
@@ -205,7 +191,6 @@ class Task:
             planned_end=tu.parse_date(d.get("完了予定日")),
             deadline=tu.parse_date(d.get("期限")),
             done_date=tu.parse_date(d.get("完了日")),
-            estimate_hours=float(est) if est is not None else None,
             progress=int(d.get("進捗率", 0)),
             history=[ProgressEntry.from_dict(e) for e in d.get("進捗履歴", [])],
             memo=d.get("メモ") or "",

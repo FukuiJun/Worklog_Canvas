@@ -182,7 +182,7 @@ def period_summary(worklogs: Iterable[Worklog], tasks: Iterable[Task],
 
 
 def task_actual_minutes(worklogs: Iterable[Worklog], task_id: str, until: _dt.date | None = None) -> int:
-    """タスクの実績時間（メイン時間の累計）。予定工数との比較に使う。until を指定するとその日まで。"""
+    """タスクの実績時間（メイン時間の累計）。until を指定するとその日まで。"""
     return sum(w.duration for w in worklogs
                if w.kind == KIND_TASK and w.task_id == task_id and (until is None or w.date <= until))
 
@@ -284,12 +284,6 @@ class ProgressRow:
     period_main: int  # 期間内のメイン時間（分）
     period_sub: int  # 期間内のサブ時間（分）
     remaining_days: int | None  # 完了予定日までの残り日数（過ぎていれば負）
-
-    @property
-    def over_estimate(self) -> bool:
-        """実績時間が予定工数を超えているか。"""
-        est = self.task.estimate_hours
-        return est is not None and self.actual > round(est * 60)
 
 
 _STATUS_RANK = {"進行中": 0, "未着手": 1, "保留": 2, "完了": 3}

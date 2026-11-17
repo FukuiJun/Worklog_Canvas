@@ -9,7 +9,7 @@ from . import storage
 from . import timeutil as tu
 
 APP_DIR_NAME = "WorklogCanvas"
-DEFAULT_VIEW_START = "08:00"
+DEFAULT_VIEW_START = "07:00"
 DEFAULT_VIEW_END = "20:00"
 
 
@@ -31,6 +31,7 @@ class Settings:
     ics_path: str | None = None  # M6
     report_dir: str | None = None  # 週報を最後に保存したフォルダ
     csv_dir: str | None = None  # CSVを最後に選んだフォルダ
+    version: int = 2  # 設定の形式の版（2: 表示開始の既定を 7:00 に変更）
 
     @property
     def view_range(self) -> tuple[int, int]:
@@ -51,7 +52,13 @@ class Settings:
         except storage.JsonFormatError:
             data = {}
         known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in known})
+        values = {k: v for k, v in data.items() if k in known}
+        if data and int(data.get("version") or 1) < 2:
+            # 版1の既定（8:00 開始）のままなら、新しい既定の 7:00 開始にする。自分で変えた時刻はそのまま
+            if values.get("view_start") == "08:00":
+                values["view_start"] = DEFAULT_VIEW_START
+            values["version"] = 2
+        return cls(**values)
 
     def save(self, path: Path | None = None) -> None:
         storage.atomic_write_json(path or app_dir() / "settings.json", asdict(self))

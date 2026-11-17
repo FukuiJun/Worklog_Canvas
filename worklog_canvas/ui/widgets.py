@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import datetime as _dt
 
-from PySide6.QtCore import QDate, QEvent, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtCore import QDate, QEvent, QObject, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QTextCharFormat
 from PySide6.QtWidgets import (
-    QButtonGroup, QComboBox, QDateEdit, QHBoxLayout, QLabel, QLineEdit, QRadioButton, QSizePolicy, QSlider,
-    QToolButton, QWidget,
+    QAbstractItemView, QButtonGroup, QCalendarWidget, QComboBox, QDateEdit, QHBoxLayout, QLabel,
+    QLineEdit, QRadioButton, QSizePolicy, QSlider, QSpinBox, QToolButton, QWidget,
 )
 
 from ..core import timeutil as tu
@@ -94,6 +94,7 @@ class OptionalDateEdit(QWidget):
         lay.setSpacing(4)
         lay.addWidget(self.edit, 1)
         lay.addWidget(clear)
+        enable_calendar_hover(self.edit)
         cal = self.edit.calendarWidget()
         cal.clicked.connect(self._picked)
         cal.activated.connect(self._picked)
@@ -219,33 +220,55 @@ class RadioChoice(QWidget):
 
 
 class ProgressBarInput(QWidget):
-    """進捗率をバー（スライダー）で入力する（0〜100、5刻み）。右に「40%」のように数字を出す。"""
+    """進捗率をバー（スライダー）か数値で入力する（0〜100、5刻み）。バーと数値の欄は連動する。
+
+    数値の欄には 5 の倍数でない値も打てるが、確定したときに最も近い 5 の倍数に直す。
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 4, 0, 4)
+        lay.setSpacing(12)
         self.setMinimumHeight(ROW_HEIGHT)
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, 20)  # 1目盛り = 5%
         self.slider.setPageStep(2)
         self.slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.slider.setAccessibleName("進捗率")
-        self.label = QLabel("0%")
-        self.label.setMinimumWidth(44)
-        self.label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.slider.setAccessibleName("進捗率のバー")
+        self.spin = QSpinBox()
+        self.spin.setRange(0, 100)
+        self.spin.setSingleStep(5)
+        self.spin.setSuffix(" %")
+        self.spin.setFixedWidth(96)
+        self.spin.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.spin.setAccessibleName("進捗率")
         lay.addWidget(self.slider, 1)
-        lay.addWidget(self.label)
-        self.slider.valueChanged.connect(lambda v: self.label.setText(f"{v * 5}%"))
+        lay.addWidget(self.spin)
+        self.slider.valueChanged.connect(self._from_slider)
+        self.spin.valueChanged.connect(self._from_spin)
+        self.spin.editingFinished.connect(lambda: self.spin.setValue(self.value5()))
+
+    def _from_slider(self, v: int) -> None:
+        if self.spin.value() // 5 != v or self.spin.value() % 5:
+            self.spin.blockSignals(True)
+            self.spin.setValue(v * 5)
+            self.spin.blockSignals(False)
+
+    def _from_spin(self, v: int) -> None:
+        self.slider.blockSignals(True)
+        self.slider.setValue(int(round(v / 5)))
+        self.slider.blockSignals(False)
 
     def value(self) -> int:
-        return self.slider.value() * 5
+        return self.spin.value()
 
     def value5(self) -> int:
-        return self.value()
+        """5刻みに丸めた値（保存に使う）。"""
+        return int(round(self.spin.value() / 5)) * 5
 
     def setValue(self, value: int) -> None:
-        self.slider.setValue(int(round(value / 5)))
+        self.spin.setValue(int(value))
 
 
 class TimeCombo(QComboBox):
@@ -262,3 +285,73 @@ class TimeCombo(QComboBox):
 
     def set_minutes(self, m: int) -> None:
         self.setCurrentIndex(self.findData(m))
+
+
+class _CalendarHover(QObject):
+    """カレンダーの日付の上にマウスを置いたとき、その日（クリックすると選ばれる日）を淡く色づける。
+
+    QCalendarWidget の日付のマスはスタイルシートの :hover が効かないので、マウスの位置の日付に
+    文字の書式（背景色）を付け、離れたら戻す。
+    """
+
+    COLOR = QColor("#E3F2FB")
+
+    def __init__(self, cal: QCalendarWidget):
+        super().__init__(cal)
+        self.cal = cal
+        self.view = cal.findChild(QAbstractItemView)
+        self.hovered: QDate | None = None
+        if self.view is not None:
+            self.view.setMouseTracking(True)
+            self.view.viewport().setMouseTracking(True)
+            self.view.viewport().installEventFilter(self)
+        cal.currentPageChanged.connect(lambda _y, _m: self._set(None))
+
+    def date_at(self, pos) -> QDate | None:
+        """表示中のマス（pos はビューポートの座標）の日付。曜日・週番号の見出しは None。"""
+        index = self.view.indexAt(pos)
+        if not index.isValid():
+            return None
+        first_row = 0 if self.cal.horizontalHeaderFormat() == QCalendarWidget.NoHorizontalHeader else 1
+        first_col = 0 if self.cal.verticalHeaderFormat() == QCalendarWidget.NoVerticalHeader else 1
+        row, col = index.row() - first_row, index.column() - first_col
+        if row < 0 or col < 0:
+            return None
+        try:
+            day = int(index.data())
+        except (TypeError, ValueError):
+            return None
+        shown = QDate(self.cal.yearShown(), self.cal.monthShown(), 1)
+        if row <= 1 and day > 20:
+            shown = shown.addMonths(-1)  # 前の月の末の日
+        elif row >= 4 and day < 15:
+            shown = shown.addMonths(1)  # 次の月の初めの日
+        d = QDate(shown.year(), shown.month(), day)
+        return d if d.isValid() else None
+
+    def _set(self, d: QDate | None) -> None:
+        if d == self.hovered:
+            return
+        if self.hovered is not None:
+            self.cal.setDateTextFormat(self.hovered, QTextCharFormat())
+        self.hovered = d
+        if d is not None:
+            fmt = QTextCharFormat()
+            fmt.setBackground(self.COLOR)
+            self.cal.setDateTextFormat(d, fmt)
+
+    def eventFilter(self, obj, ev):
+        t = ev.type()
+        if t == QEvent.MouseMove:
+            self._set(self.date_at(ev.position().toPoint()))
+        elif t in (QEvent.Leave, QEvent.Hide):
+            self._set(None)
+        return False
+
+
+def enable_calendar_hover(date_edit: QDateEdit) -> None:
+    """日付欄のカレンダー（ポップアップ）で、マウスを置いた日を淡く色づけるようにする。"""
+    cal = date_edit.calendarWidget()
+    if cal is not None and not cal.property("_wc_hover"):
+        cal.setProperty("_wc_hover", True)
+        _CalendarHover(cal)

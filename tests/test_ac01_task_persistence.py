@@ -17,7 +17,7 @@ def test_ac01_add_edit_delete_survive_restart(data_folder):
     repo = data_folder.user("fukui")
     a = repo.add_task(Task(id="", name="タスクA", category="治具", priority="高",
                            planned_end=dt.date(2026, 11, 20), deadline=dt.date(2026, 11, 30),
-                           estimate_hours=16.0, memo="1行目\n2行目"))
+                           memo="1行目\n2行目"))
     b = repo.add_task(Task(id="", name="タスクB"))
     c = repo.add_task(Task(id="", name="タスクC"))
     assert [a.id, b.id, c.id] == ["T-0001", "T-0002", "T-0003"]
@@ -33,7 +33,7 @@ def test_ac01_add_edit_delete_survive_restart(data_folder):
     assert [t.to_dict() for t in again.tasks] == expected
     assert [t.name for t in again.tasks] == ["タスクA", "タスクB（改）"]
     assert again.get_task("T-0001").memo == "1行目\n2行目"
-    assert again.get_task("T-0001").estimate_hours == 16.0
+    assert "予定工数" not in again.get_task("T-0001").to_dict()  # 予定工数は廃止
 
     # 削除済みの番号は再利用しない
     d = again.add_task(Task(id="", name="タスクD"))

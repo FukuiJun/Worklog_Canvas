@@ -118,8 +118,8 @@ def test_f04_progress_table(win, qapp):
     t = page.progress_table
     rows = {t.item(r, 0).text(): r for r in range(t.rowCount())}
     r = rows["次世代基板：マイコンのバッテリ読み取り精度の検証・評価"]
-    assert t.item(r, 4).text() == "24.75h / 16h（超過）"
-    assert t.item(r, 4).foreground().color().name().upper() == "#C62828"
+    assert t.horizontalHeaderItem(4).text() == "実績時間"
+    assert t.item(r, 4).text() == "24.75h"
     assert t.item(r, 7).text() == "あと 8 日"
     assert t.cellWidget(r, 3).value == 40
     r = rows["IC微小電流測定用の治具作成（INA226＋Arduinoのプログラム）"]

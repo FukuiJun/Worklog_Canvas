@@ -10,7 +10,7 @@ from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QDrag, QFont, QFontM
 from PySide6.QtWidgets import (
     QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget, QListWidgetItem, QMenu,
     QMessageBox,
-    QPushButton, QScrollArea, QSizePolicy, QToolButton, QToolTip, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QToolButton, QToolTip, QVBoxLayout, QWidget,
 )
 
 from ..core import aggregate as ag
@@ -21,6 +21,7 @@ from ..core import timeutil as tu
 from ..core.models import KIND_ONEOFF, KIND_TASK, SubItem, ValidationError, Worklog
 from ..core.overlap import OVERLAP_MESSAGE, OverlapError, find_overlaps
 from .entry_popup import EntryPopup
+from .month_view import MonthView
 from .state import AppState
 from . import theme
 from .widgets import color_icon, text_color_for
@@ -546,6 +547,7 @@ class TimelineCanvas(QWidget):
             act("表示中の定期の予定をまとめて記録…", self.confirm_all_occurrences, name="confirm_all")
             menu.addSeparator()
             act("この定期タスクを編集…", lambda: self.edit_recurring(occ.item.id), name="edit_recurring")
+            act("この定期タスクを削除…", lambda: self.delete_recurring(occ.item.id), name="delete_recurring")
             return menu
         appt = self.appointment_at(pos)
         if appt:  # Outlookの予定
@@ -622,6 +624,18 @@ class TimelineCanvas(QWidget):
     def edit_recurring(self, rid: str) -> bool:
         from .recurring_dialog import RecurringDialog
         return bool(RecurringDialog(self.state, self.state.repo.get_recurring(rid), self).exec())
+
+    def delete_recurring(self, rid: str) -> bool:
+        """定期の予定（繰り返しの時間帯）を削除する。記録済みの作業バーは消さない。"""
+        from .recurring_dialog import item_label
+        it = self.state.repo.get_recurring(rid)
+        if QMessageBox.question(self, "定期タスクの削除",
+                                f"「{item_label(self.state, it)}（{it.describe()}）」の繰り返しを削除しますか？\n"
+                                "記録済みの作業バーは消えません。") != QMessageBox.Yes:
+            return False
+        self.state.repo.delete_recurring(rid)
+        self.state.worklogs_changed.emit()
+        return True
 
     # --- 定期の予定（F-09） ---
     def occurrences(self):
@@ -927,7 +941,7 @@ class TimelineTab(QWidget):
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
         self.state = state
-        self.mode = state.settings.view_mode if state.settings.view_mode in ("day", "week") else "week"
+        self.mode = state.settings.view_mode if state.settings.view_mode in ("day", "week", "month") else "week"
         self.anchor = state.today()
 
         # 上部の操作
@@ -942,16 +956,16 @@ class TimelineTab(QWidget):
         self.period_label.setFont(f)
         self.btn_day = QToolButton(text="日")
         self.btn_week = QToolButton(text="週")
+        self.btn_month = QToolButton(text="月")
+        self.btn_month.setToolTip("1か月をマス目で表示（日付をクリックするとその日を表示）")
         grp = QButtonGroup(self)
-        for b in (self.btn_day, self.btn_week):
+        for b in (self.btn_day, self.btn_week, self.btn_month):
             b.setCheckable(True)
             b.setMinimumWidth(40)
             grp.addButton(b)
         self.btn_import = QPushButton("予定を取り込む")
         self.btn_import.setProperty("accent", True)
         self.btn_import.setToolTip("Outlookから保存した予定表ファイル（.ics）を選ぶ。タイムラインへドラッグ＆ドロップしても読み込めます")
-        self.btn_recurring = QPushButton("定期タスク…")
-        self.btn_recurring.setToolTip("決まった時間の作業（朝会など）を登録・編集する")
         self.btn_reload = QPushButton("再読み込み")
         self.btn_reload.setToolTip("前回読み込んだ予定表ファイルを読み直す")
         self.ics_file: ics.IcsFile | None = None
@@ -962,11 +976,10 @@ class TimelineTab(QWidget):
         bar.addSpacing(12)
         bar.addWidget(self.btn_day)
         bar.addWidget(self.btn_week)
+        bar.addWidget(self.btn_month)
         bar.addStretch()
         bar.addWidget(self.btn_import)
         bar.addWidget(self.btn_reload)
-        bar.addSpacing(8)
-        bar.addWidget(self.btn_recurring)
 
         # 左: タスク一覧パネル
         left = QWidget()
@@ -1001,9 +1014,18 @@ class TimelineTab(QWidget):
         rl = QVBoxLayout(right)
         rl.setContentsMargins(12, 10, 12, 10)
         rl.setSpacing(4)
-        rl.addWidget(self.header)
-        rl.addWidget(scroll, 1)
-        rl.addWidget(self.footer)
+        timeline_page = QWidget()
+        tl_lay = QVBoxLayout(timeline_page)
+        tl_lay.setContentsMargins(0, 0, 0, 0)
+        tl_lay.setSpacing(4)
+        tl_lay.addWidget(self.header)
+        tl_lay.addWidget(scroll, 1)
+        tl_lay.addWidget(self.footer)
+        self.month_view = MonthView(state)  # 月表示
+        self.pages = QStackedWidget()
+        self.pages.addWidget(timeline_page)
+        self.pages.addWidget(self.month_view)
+        rl.addWidget(self.pages, 1)
 
         body = QHBoxLayout()
         body.setSpacing(14)
@@ -1020,13 +1042,14 @@ class TimelineTab(QWidget):
         self.btn_today.clicked.connect(self.go_today)
         self.btn_day.clicked.connect(lambda: self.set_mode("day"))
         self.btn_week.clicked.connect(lambda: self.set_mode("week"))
+        self.btn_month.clicked.connect(lambda: self.set_mode("month"))
+        self.month_view.day_clicked.connect(self.show_day)
         state.worklogs_changed.connect(self.refresh_canvas)
         state.tasks_changed.connect(self.refresh_all)
         state.categories_changed.connect(self.refresh_all)
         state.repo_switched.connect(lambda: self._update_appointments(announce=False))
         self.btn_import.clicked.connect(self.choose_ics)
         self.btn_reload.clicked.connect(self.reload_ics)
-        self.btn_recurring.clicked.connect(self.open_recurring_list)
         self.canvas.ics_dropped.connect(self.load_ics)
         if state.settings.ics_path:  # 前回の予定表ファイルから再表示（5.3）
             self._open_ics(state.settings.ics_path, announce_errors=False)
@@ -1086,7 +1109,7 @@ class TimelineTab(QWidget):
 
     def _update_appointments(self, announce: bool = True) -> None:
         """表示中の日にかかる予定を、読み込んだ予定表ファイルから展開する（週を切り替えたときも同じファイルから）。"""
-        dates = self.canvas.dates
+        dates = self.visible_dates()
         appts: list[ics.Appointment] = []
         if self.ics_file is not None and dates:
             weeks = sorted({tu.week_start(d) for d in dates})
@@ -1100,8 +1123,12 @@ class TimelineTab(QWidget):
             if announce and not self.state.viewing_other:
                 if skipped:
                     self.state.error.emit(f"{skipped}件の予定を読み飛ばしました")
-                elif found_in_week == 0:
+                elif found_in_week == 0 and self.mode != "month":
                     self.state.info.emit(ics.EMPTY_WEEK_MESSAGE)
+        if self.mode == "month":
+            self.month_view.appointments = appts
+            self.month_view.update()
+            return
         self.canvas.appointments = appts
         self.canvas.update()
         self.header.update_height()
@@ -1111,7 +1138,17 @@ class TimelineTab(QWidget):
         self.mode = mode
         self.btn_day.setChecked(mode == "day")
         self.btn_week.setChecked(mode == "week")
+        self.btn_month.setChecked(mode == "month")
+        self.pages.setCurrentWidget(self.month_view if mode == "month" else self.pages.widget(0))
         self._apply_dates()
+
+    def show_day(self, day: _dt.date) -> None:
+        """月表示でマスをクリックしたとき: その日の日表示にする。"""
+        self.anchor = day
+        self.set_mode("day")
+
+    def visible_dates(self) -> list[_dt.date]:
+        return tl.visible_dates(self.anchor, self.mode)
 
     def step(self, direction: int) -> None:
         self.anchor = tl.step_anchor(self.anchor, self.mode, direction)
@@ -1122,7 +1159,13 @@ class TimelineTab(QWidget):
         self._apply_dates()
 
     def _apply_dates(self) -> None:
-        dates = tl.visible_dates(self.anchor, self.mode)
+        dates = self.visible_dates()
+        if self.mode == "month":
+            self.period_label.setText(f"{self.anchor:%Y年}{self.anchor.month}月")
+            self.month_view.set_month(self.anchor)
+            if hasattr(self, "ics_file"):
+                self._update_appointments(announce=self.ics_file is not None)
+            return
         if len(dates) == 1:
             d = dates[0]
             self.period_label.setText(f"{d:%Y/%m/%d}（{WEEKDAYS[d.weekday()]}）")
@@ -1136,14 +1179,12 @@ class TimelineTab(QWidget):
     def refresh_canvas(self) -> None:
         self.canvas.update()
         self.footer.update()
+        self.month_view.update()
 
     def refresh_all(self) -> None:
         self.panel.refresh()
         self.refresh_canvas()
 
-    def open_recurring_list(self) -> None:
-        from .recurring_dialog import RecurringListDialog
-        RecurringListDialog(self.state, self).exec()
         self.refresh_canvas()
 
     def undo(self) -> None:

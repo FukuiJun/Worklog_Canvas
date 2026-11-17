@@ -16,7 +16,7 @@ from ..core import timeutil as tu
 from .charts import DailyStackChart, Legend, ProgressMeter, TaskBarChart
 from .report_page import ReportPage
 from .state import AppState
-from .widgets import color_icon
+from .widgets import color_icon, enable_calendar_hover
 
 RED = QColor("#C62828")
 EMPTY_MESSAGE = "記録がありません"
@@ -88,6 +88,7 @@ class SummaryPage(QWidget):
         self.start_edit, self.end_edit = QDateEdit(), QDateEdit()
         for e in (self.start_edit, self.end_edit):
             e.setCalendarPopup(True)
+            enable_calendar_hover(e)
             e.setDisplayFormat("yyyy-MM-dd")
             e.setDate(_qdate(self.anchor))
         bar.addWidget(self.start_edit)
@@ -113,7 +114,7 @@ class SummaryPage(QWidget):
         self.cat_table.setHorizontalHeaderLabels(["カテゴリ", "時間", "割合"])
         self.progress_table = QTableWidget(0, 8)
         self.progress_table.setHorizontalHeaderLabels(
-            ["タスク", "カテゴリ", "ステータス", "進捗率", "実績時間 / 予定工数", "サブ時間", "完了予定日", "残り日数"])
+            ["タスク", "カテゴリ", "ステータス", "進捗率", "実績時間", "サブ時間", "完了予定日", "残り日数"])
         for t in (self.cat_table, self.progress_table):
             t.setEditTriggers(QAbstractItemView.NoEditTriggers)
             t.setSelectionMode(QAbstractItemView.NoSelection)
@@ -145,7 +146,7 @@ class SummaryPage(QWidget):
         cl.addWidget(self.period_box)
         cl.addWidget(self.empty_label)
         cl.addWidget(_heading("タスクごとの進捗"))
-        note = QLabel("実績時間はメイン時間の累計。予定工数を超えたものは赤字。対象は未完了のタスクと、期間内に作業バーがあるタスク。")
+        note = QLabel("実績時間はメイン時間の累計。対象は未完了のタスクと、期間内に作業バーがあるタスク。")
         note.setStyleSheet("color:#666;")
         cl.addWidget(note)
         cl.addWidget(self.progress_table)
@@ -299,17 +300,7 @@ class SummaryPage(QWidget):
             t.setItem(r, 1, cat)
             t.setItem(r, 2, QTableWidgetItem(task.status))
             t.setCellWidget(r, 3, ProgressMeter(task.progress, self.state.task_color(task)))
-            actual = tu.format_hours(row.actual)
-            if task.estimate_hours is not None:
-                text = f"{actual} / {task.estimate_hours:g}h"
-                if row.over_estimate:
-                    text += "（超過）"
-            else:
-                text = actual
-            it = self._num(text)
-            if row.over_estimate:
-                it.setForeground(RED)
-            t.setItem(r, 4, it)
+            t.setItem(r, 4, self._num(tu.format_hours(row.actual)))
             t.setItem(r, 5, self._num(tu.format_hours(row.sub) if row.sub else "—"))
             t.setItem(r, 6, QTableWidgetItem(task.planned_end.isoformat() if task.planned_end else "—"))
             rem, red = remaining_text(row)
