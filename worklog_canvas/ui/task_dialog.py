@@ -1,13 +1,14 @@
-"""タスクの追加・編集ダイアログ（F-01）と、カテゴリの追加ダイアログ。"""
+"""タスクの追加・編集ダイアログ（F-01）と、カテゴリ・サブカテゴリの追加。"""
 from __future__ import annotations
 
 import copy
 from dataclasses import replace
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QColorDialog, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
+    QInputDialog, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
 from ..core.colors import next_category_color
@@ -69,6 +70,21 @@ class CategoryDialog(QDialog):
         self.accept()
 
 
+def add_subcategory_dialog(parent, state: AppState, category: str) -> str | None:
+    """カテゴリの下にサブカテゴリを追加する。追加（または既にある）名前を返す。"""
+    name, ok = QInputDialog.getText(parent, "サブカテゴリの追加", f"「{category}」の下に追加するサブカテゴリ名")
+    if not ok or not name.strip():
+        return None
+    try:
+        state.folder.add_subcategory(category, name.strip())
+    except (ValidationError, KeyError, OSError) as e:
+        QMessageBox.warning(parent, "サブカテゴリの追加",
+                            f"追加できませんでした: {e if not isinstance(e, KeyError) else 'カテゴリが見つかりません'}")
+        return None
+    state.reload_categories()
+    return name.strip()
+
+
 class TaskDialog(QDialog):
     """task が None なら新規。duplicate_of を渡すと複製として新規作成。"""
 
@@ -102,9 +118,23 @@ class TaskDialog(QDialog):
         cl.setContentsMargins(0, 0, 0, 0)
         cl.addWidget(self.category, 1)
         btn_cat = QPushButton("新しいカテゴリ…")
+        btn_cat.setMinimumWidth(150)
         btn_cat.clicked.connect(self._new_category)
         cl.addWidget(btn_cat)
         self._fill_categories(base.category)
+
+        # サブカテゴリ（選んだカテゴリの下の分類）
+        self.subcategory = QComboBox()
+        sub_box = QWidget()
+        sl = QHBoxLayout(sub_box)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.addWidget(self.subcategory, 1)
+        self.btn_sub = QPushButton("新しいサブカテゴリ…")
+        self.btn_sub.setMinimumWidth(150)
+        self.btn_sub.clicked.connect(self._new_subcategory)
+        sl.addWidget(self.btn_sub)
+        self._fill_subcategories(base.subcategory)
+        self.category.currentIndexChanged.connect(lambda _i: self._fill_subcategories(""))
 
         self.status = QComboBox()
         self.status.addItems(STATUSES)
@@ -157,12 +187,14 @@ class TaskDialog(QDialog):
         form.addRow("種類", type_box)
         form.addRow("タスク名 *", name_box)
         form.addRow("カテゴリ", cat_box)
+        form.addRow("サブカテゴリ", sub_box)
         form.addRow("ステータス", self.status)
         form.addRow("優先度", self.priority)
-        form.addRow("開始日", self.start_date)
-        form.addRow("完了予定日", self.planned_end)
-        form.addRow("期限", self.deadline)
-        form.addRow("完了日", self.done_date)
+        # 日付4項目は2行にまとめる（開始日・完了予定日 / 期限・完了日）
+        self.dates_row1 = self._date_pair(self.start_date, "完了予定日", self.planned_end)
+        self.dates_row2 = self._date_pair(self.deadline, "完了日", self.done_date)
+        form.addRow("開始日", self.dates_row1)
+        form.addRow("期限", self.dates_row2)
         form.addRow("予定工数", self.estimate)
         form.addRow("進捗率", self.progress)
         form.addRow("メモ", self.memo)
@@ -177,18 +209,35 @@ class TaskDialog(QDialog):
         lay.addWidget(buttons)
         self.status.currentTextChanged.connect(self._status_changed)
         self.task_type.currentIndexChanged.connect(self._type_changed)
-        self.setMinimumWidth(540)
+        self.setMinimumWidth(640)
         self.saved: Task | None = None
         self._type_changed()
 
     def current_type(self) -> str:
         return self.task_type.currentData()
 
+    @staticmethod
+    def _date_pair(left: QWidget, right_label: str, right: QWidget) -> QWidget:
+        box = QWidget()
+        lay = QHBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(left, 1)
+        label = QLabel(right_label)
+        label.setMinimumWidth(78)
+        label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        lay.addSpacing(8)
+        lay.addWidget(label)
+        lay.addWidget(right, 1)
+        return box
+
     def _type_changed(self) -> None:
-        """種類に合わせて入力欄を出し分ける。日常・定期タスクは進捗率・日付・予定工数を持たない。"""
+        """種類に合わせて入力欄を出し分ける。
+
+        日常・定期タスクはステータス・優先度・日付・予定工数・進捗率を持たない。
+        """
         kind = self.current_type()
         is_work = kind == TYPE_WORK
-        for w in (self.planned_end, self.deadline, self.estimate, self.progress):
+        for w in (self.status, self.priority, self.dates_row1, self.dates_row2, self.estimate, self.progress):
             self.form.setRowVisible(w, is_work)
         self.recurrence_box.setVisible(kind == TYPE_RECURRING)
         self.type_hint.setText({
@@ -212,6 +261,28 @@ class TaskDialog(QDialog):
         if dlg.exec():
             self._fill_categories(dlg.created_name)
 
+    def _fill_subcategories(self, select: str) -> None:
+        cat = self.category.currentData() or ""
+        self.subcategory.clear()
+        self.subcategory.addItem("（なし）", "")
+        for name in self.state.subcategories.get(cat, []):
+            self.subcategory.addItem(name, name)
+        if select and self.subcategory.findData(select) < 0:  # categories.json にないサブカテゴリ
+            self.subcategory.addItem(select, select)
+        self.subcategory.setCurrentIndex(max(0, self.subcategory.findData(select)))
+        has_cat = bool(cat)
+        self.subcategory.setEnabled(has_cat)
+        self.btn_sub.setEnabled(has_cat)
+        self.subcategory.setToolTip("" if has_cat else "先にカテゴリを選んでください")
+
+    def _new_subcategory(self) -> None:
+        cat = self.category.currentData() or ""
+        if not cat:
+            return
+        name = add_subcategory_dialog(self, self.state, cat)
+        if name:
+            self._fill_subcategories(name)
+
     def _status_changed(self, status: str) -> None:
         """完了にしたら完了日に今日を自動入力、完了以外に戻したら空にする。"""
         if status == STATUS_DONE and self.done_date.date() is None:
@@ -226,6 +297,7 @@ class TaskDialog(QDialog):
             base,
             name=self.name.text().strip(),
             category=self.category.currentData() or "",
+            subcategory=(self.subcategory.currentData() or "") if self.category.currentData() else "",
             status=self.status.currentText(),
             priority=self.priority.currentText(),
             start_date=self.start_date.date(),

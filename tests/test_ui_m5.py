@@ -184,9 +184,9 @@ def test_settings_display_name_and_view_range(win, sample_folder):
 
 def test_settings_category_in_use_cannot_be_deleted(win, monkeypatch):
     dlg = SettingsDialog(win.state, win)
-    for i in range(dlg.cat_list.count()):
-        if dlg.cat_list.item(i).data(Qt.UserRole) == "治具":
-            dlg.cat_list.setCurrentRow(i)
+    for i in range(dlg.cat_list.topLevelItemCount()):
+        if dlg.cat_list.topLevelItem(i).data(0, Qt.UserRole) == "治具":
+            dlg.cat_list.setCurrentItem(dlg.cat_list.topLevelItem(i))
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
     dlg._delete_category()
     assert "使われているため" in dlg.cat_err.text()

@@ -29,7 +29,7 @@ UNCATEGORIZED = "（未分類）"
 ALL = "すべて"
 OPEN = "未完了"
 
-COLUMNS = ["ID", "タスク名", "種類", "カテゴリ", "ステータス", "優先度", "開始日", "完了予定日", "期限", "完了日",
+COLUMNS = ["ID", "タスク名", "種類", "カテゴリ", "サブカテゴリ", "ステータス", "優先度", "開始日", "完了予定日", "期限", "完了日",
            "予定工数", "進捗率"]
 
 
@@ -96,6 +96,7 @@ def duplicate_of(task: Task) -> Task:
     """複製の初期値: 進捗とステータスはリセットし、名前に「（コピー）」を付ける。"""
     suffix = "（コピー）"
     return Task(id="", name=(task.name[:TASK_NAME_MAX - len(suffix)] + suffix), category=task.category,
+                subcategory=task.subcategory,
                 status=STATUS_NOT_STARTED, priority=task.priority, start_date=task.start_date,
                 planned_end=task.planned_end, deadline=task.deadline, estimate_hours=task.estimate_hours,
                 memo=task.memo, task_type=task.task_type)
@@ -120,7 +121,8 @@ class TaskListTab(QWidget):
         self.btn_dup = QPushButton("複製")
         self.btn_del = QPushButton("削除")
         self.btn_csv = QPushButton("CSVから取り込む…")
-        self.btn_csv.setToolTip("列: タスク名,カテゴリ,完了予定日,期限（UTF-8 BOM付き または Shift_JIS）")
+        self.btn_csv.setToolTip("列: タスク名,カテゴリ,完了予定日,期限（任意: サブカテゴリ,種類）"
+                                "（UTF-8 BOM付き または Shift_JIS）")
         for b in (self.btn_add, self.btn_edit, self.btn_dup, self.btn_del, self.btn_csv):
             bar.addWidget(b)
         bar.addSpacing(20)
@@ -167,6 +169,8 @@ class TaskListTab(QWidget):
         self.btn_del.clicked.connect(self.delete_selected)
         self.btn_csv.clicked.connect(self.import_csv)
         self.table.cellDoubleClicked.connect(lambda r, c: self.edit_selected())
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
         self.f_category.currentIndexChanged.connect(self.refresh)
         self.f_status.currentIndexChanged.connect(self.refresh)
         self.f_type.currentIndexChanged.connect(self.refresh)
@@ -176,29 +180,32 @@ class TaskListTab(QWidget):
         self._fill_category_filter()
 
     def _fill_category_filter(self) -> None:
-        cur = self.f_category.currentText() or ALL
+        """カテゴリの絞り込み。カテゴリの下にサブカテゴリを字下げして並べる（data は (カテゴリ, サブ)）。"""
+        cur = self.f_category.currentData()
         self.f_category.blockSignals(True)
         self.f_category.clear()
-        self.f_category.addItem(ALL)
+        self.f_category.addItem(ALL, None)
         for name, color in self.state.category_colors.items():
-            self.f_category.addItem(color_icon(color), name)
-        self.f_category.addItem(UNCATEGORIZED)
-        idx = self.f_category.findText(cur)
-        self.f_category.setCurrentIndex(max(0, idx))
+            self.f_category.addItem(color_icon(color), name, (name, None))
+            for sub in self.state.subcategories.get(name, []):
+                self.f_category.addItem(f"　└ {sub}", (name, sub))
+        self.f_category.addItem(UNCATEGORIZED, ("", None))
+        idx = next((i for i in range(self.f_category.count()) if self.f_category.itemData(i) == cur), 0)
+        self.f_category.setCurrentIndex(idx)
         self.f_category.blockSignals(False)
         self.refresh()
 
     def filtered_tasks(self) -> list[Task]:
-        cat, st = self.f_category.currentText(), self.f_status.currentText()
+        cat_filter, st = self.f_category.currentData(), self.f_status.currentText()
         kind = self.f_type.currentText()
         out = []
         for t in self.state.repo.tasks:
             if kind not in (ALL, "") and t.task_type != kind:
                 continue
-            if cat == UNCATEGORIZED and t.category:
-                continue
-            if cat not in (ALL, UNCATEGORIZED, "") and t.category != cat:
-                continue
+            if cat_filter is not None:
+                cat, sub = cat_filter
+                if t.category != cat or (sub is not None and t.subcategory != sub):
+                    continue
             if st == OPEN and not t.is_open:
                 continue
             if st not in (ALL, OPEN) and t.status != st:
@@ -226,12 +233,17 @@ class TaskListTab(QWidget):
             cat = SortItem(t.category or "")
             cat.setIcon(color_icon(self.state.task_color(t)))
             cells.append(cat)
-            st = SortItem(t.status)
-            st.setData(Qt.UserRole, STATUSES.index(t.status))
+            cells.append(SortItem(t.subcategory or ""))
+            # 日常・定期タスクはステータス・優先度を持たない（「—」）
+            st = SortItem(t.status if t.is_work else "—")
+            st.setData(Qt.UserRole, STATUSES.index(t.status) if t.is_work else -1)
             cells.append(st)
-            pr = SortItem(t.priority)
-            pr.setData(Qt.UserRole, PRIORITIES.index(t.priority))
+            pr = SortItem(t.priority if t.is_work else "—")
+            pr.setData(Qt.UserRole, PRIORITIES.index(t.priority) if t.is_work else -1)
             cells.append(pr)
+            if not t.is_work:
+                st.setTextAlignment(Qt.AlignCenter)
+                pr.setTextAlignment(Qt.AlignCenter)
             cells.append(_date_item(t.start_date))
             planned = _date_item(t.planned_end)
             if t.is_open and t.planned_end and t.planned_end < today:
@@ -284,6 +296,29 @@ class TaskListTab(QWidget):
             b.setEnabled(has)
         self.btn_add.setEnabled(not self.state.readonly)
         self.btn_csv.setEnabled(not self.state.readonly)
+
+    def build_context_menu(self, pos) -> QMenu | None:
+        """表の右クリックメニュー（編集・複製・削除）。右クリックした行を選んでから出す。"""
+        item = self.table.itemAt(pos)
+        if item is None:
+            return None
+        self.table.selectRow(item.row())
+        menu = QMenu(self.table)
+        editable = not self.state.readonly
+        for name, text, slot in (("edit", "編集…", self.edit_selected), ("duplicate", "複製…", self.duplicate_selected),
+                                 ("delete", "削除…", self.delete_selected)):
+            a = menu.addAction(text)
+            a.setObjectName(name)
+            a.setEnabled(editable)
+            a.triggered.connect(lambda _c=False, f=slot: f())
+            if name == "duplicate":
+                menu.addSeparator()
+        return menu
+
+    def _show_context_menu(self, pos) -> None:
+        menu = self.build_context_menu(pos)
+        if menu is not None:
+            menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def keyPressEvent(self, ev):
         if ev.key() == Qt.Key_Delete:
