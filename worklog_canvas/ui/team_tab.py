@@ -17,7 +17,7 @@ from ..core import timeutil as tu
 from . import theme
 from .state import AppState
 from .timeline_view import GUTTER, MIN_HOUR_PX, WEEKDAYS, paint_bar
-from .widgets import color_icon
+from .widgets import color_icon, enable_calendar_hover
 
 MIN_COL_W = 110
 
@@ -143,6 +143,7 @@ class TeamTab(QWidget):
         self.btn_prev, self.btn_today, self.btn_next = QPushButton("◀ 前日"), QPushButton("今日"), QPushButton("翌日 ▶")
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
+        enable_calendar_hover(self.date_edit)
         self.date_edit.setDisplayFormat("yyyy-MM-dd")
         self.day_label = QLabel()
         f = self.day_label.font()

@@ -164,3 +164,17 @@ def test_recurring_hidden_when_viewing_other(win, sample_folder):
     other = DataFolder(win.state.folder.root).user("fukui", readonly=True)
     win.state.switch_to(other)
     assert win.timeline.canvas.occurrences() == []
+
+
+def test_no_recurring_button_and_delete_from_menu(win, monkeypatch):
+    """タイムライン右上の「定期タスク…」ボタンはなし。定期の予定の右クリックから削除できる。"""
+    assert not hasattr(win.timeline, "btn_recurring")
+    c = win.timeline.canvas
+    repo = win.state.repo
+    repo.add_recurring(rc.RecurringItem(id="", start=540, end=570, pattern=rc.DAILY_WEEKDAYS, kind=KIND_ONEOFF,
+                                        title="朝会", start_date=dt.date(2026, 11, 1)))
+    win.state.worklogs_changed.emit()
+    menu = c.build_context_menu(_pt(c, 0, 9 * 60 + 15))
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    _action(menu, "delete_recurring").trigger()
+    assert repo.recurring == [] and c.occurrence_at(_pt(c, 0, 9 * 60 + 15)) is None

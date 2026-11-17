@@ -16,7 +16,7 @@ from ..core import timeutil as tu
 from .charts import DailyStackChart, Legend, ProgressMeter, TaskBarChart
 from .report_page import ReportPage
 from .state import AppState
-from .widgets import color_icon
+from .widgets import color_icon, enable_calendar_hover
 
 RED = QColor("#C62828")
 EMPTY_MESSAGE = "記録がありません"
@@ -88,6 +88,7 @@ class SummaryPage(QWidget):
         self.start_edit, self.end_edit = QDateEdit(), QDateEdit()
         for e in (self.start_edit, self.end_edit):
             e.setCalendarPopup(True)
+            enable_calendar_hover(e)
             e.setDisplayFormat("yyyy-MM-dd")
             e.setDate(_qdate(self.anchor))
         bar.addWidget(self.start_edit)

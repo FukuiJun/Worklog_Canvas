@@ -109,6 +109,7 @@ QScrollBar::handle:hover {{ background: #B7C8D5; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 
+QSlider:horizontal {{ min-height: 24px; }}
 QSlider::groove:horizontal {{ height: 6px; background: #E6EEF4; border-radius: 3px; }}
 QSlider::sub-page:horizontal {{ background: {ACCENT}; border-radius: 3px; }}
 QSlider::handle:horizontal {{
@@ -163,7 +164,35 @@ def _arrow_images() -> dict[str, str]:
         path = folder / f"{name}.png"
         pm.save(str(path), "PNG")
         out[name] = path.as_posix()
+    for name, color in (("calendar", "#5E7183"), ("calendar_disabled", "#B7C3CE")):
+        path = folder / f"{name}.png"
+        _calendar_pixmap(QColor(color)).save(str(path), "PNG")
+        out[name] = path.as_posix()
     return out
+
+
+def _calendar_pixmap(color):
+    """日付欄の右端に出すカレンダーの絵（16px 相当を2倍で描く）。"""
+    from PySide6.QtCore import QRectF, Qt
+    from PySide6.QtGui import QPainter, QPen, QPixmap
+    pm = QPixmap(32, 32)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(color, 2.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(Qt.NoBrush)
+    p.drawRoundedRect(QRectF(4, 6, 24, 22), 5, 5)  # 本体
+    p.drawLine(4, 13, 28, 13)  # 見出しの線
+    p.drawLine(11, 3, 11, 9)  # とじ具
+    p.drawLine(21, 3, 21, 9)
+    p.setPen(Qt.NoPen)
+    p.setBrush(color)
+    for x in (10, 16, 22):  # 日付の点
+        for y in (18, 23):
+            p.drawEllipse(QRectF(x - 1.6, y - 1.6, 3.2, 3.2))
+    p.end()
+    return pm
 
 
 def _arrow_rules(img: dict[str, str]) -> str:
@@ -172,8 +201,12 @@ QComboBox {{ padding-right: 26px; }}
 QComboBox::drop-down, QDateEdit::drop-down {{
     subcontrol-origin: padding; subcontrol-position: center right; width: 24px; border: 0; background: transparent;
 }}
-QComboBox::down-arrow, QDateEdit::down-arrow {{ image: url({img["down"]}); width: 12px; height: 12px; }}
-QComboBox::down-arrow:disabled, QDateEdit::down-arrow:disabled {{ image: url({img["down_disabled"]}); }}
+QComboBox::down-arrow {{ image: url({img["down"]}); width: 12px; height: 12px; }}
+QComboBox::down-arrow:disabled {{ image: url({img["down_disabled"]}); }}
+QDateEdit {{ padding-right: 28px; }}
+QDateEdit::drop-down {{ width: 30px; }}
+QDateEdit::down-arrow {{ image: url({img["calendar"]}); width: 16px; height: 16px; }}
+QDateEdit::down-arrow:disabled {{ image: url({img["calendar_disabled"]}); }}
 QSpinBox, QDoubleSpinBox, QTimeEdit {{ padding-right: 22px; }}
 QSpinBox::up-button, QDoubleSpinBox::up-button, QTimeEdit::up-button {{
     subcontrol-origin: border; subcontrol-position: top right; width: 20px; border: 0; background: transparent;

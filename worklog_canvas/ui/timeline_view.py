@@ -546,6 +546,7 @@ class TimelineCanvas(QWidget):
             act("表示中の定期の予定をまとめて記録…", self.confirm_all_occurrences, name="confirm_all")
             menu.addSeparator()
             act("この定期タスクを編集…", lambda: self.edit_recurring(occ.item.id), name="edit_recurring")
+            act("この定期タスクを削除…", lambda: self.delete_recurring(occ.item.id), name="delete_recurring")
             return menu
         appt = self.appointment_at(pos)
         if appt:  # Outlookの予定
@@ -622,6 +623,18 @@ class TimelineCanvas(QWidget):
     def edit_recurring(self, rid: str) -> bool:
         from .recurring_dialog import RecurringDialog
         return bool(RecurringDialog(self.state, self.state.repo.get_recurring(rid), self).exec())
+
+    def delete_recurring(self, rid: str) -> bool:
+        """定期の予定（繰り返しの時間帯）を削除する。記録済みの作業バーは消さない。"""
+        from .recurring_dialog import item_label
+        it = self.state.repo.get_recurring(rid)
+        if QMessageBox.question(self, "定期タスクの削除",
+                                f"「{item_label(self.state, it)}（{it.describe()}）」の繰り返しを削除しますか？\n"
+                                "記録済みの作業バーは消えません。") != QMessageBox.Yes:
+            return False
+        self.state.repo.delete_recurring(rid)
+        self.state.worklogs_changed.emit()
+        return True
 
     # --- 定期の予定（F-09） ---
     def occurrences(self):
@@ -950,8 +963,6 @@ class TimelineTab(QWidget):
         self.btn_import = QPushButton("予定を取り込む")
         self.btn_import.setProperty("accent", True)
         self.btn_import.setToolTip("Outlookから保存した予定表ファイル（.ics）を選ぶ。タイムラインへドラッグ＆ドロップしても読み込めます")
-        self.btn_recurring = QPushButton("定期タスク…")
-        self.btn_recurring.setToolTip("決まった時間の作業（朝会など）を登録・編集する")
         self.btn_reload = QPushButton("再読み込み")
         self.btn_reload.setToolTip("前回読み込んだ予定表ファイルを読み直す")
         self.ics_file: ics.IcsFile | None = None
@@ -965,8 +976,6 @@ class TimelineTab(QWidget):
         bar.addStretch()
         bar.addWidget(self.btn_import)
         bar.addWidget(self.btn_reload)
-        bar.addSpacing(8)
-        bar.addWidget(self.btn_recurring)
 
         # 左: タスク一覧パネル
         left = QWidget()
@@ -1026,7 +1035,6 @@ class TimelineTab(QWidget):
         state.repo_switched.connect(lambda: self._update_appointments(announce=False))
         self.btn_import.clicked.connect(self.choose_ics)
         self.btn_reload.clicked.connect(self.reload_ics)
-        self.btn_recurring.clicked.connect(self.open_recurring_list)
         self.canvas.ics_dropped.connect(self.load_ics)
         if state.settings.ics_path:  # 前回の予定表ファイルから再表示（5.3）
             self._open_ics(state.settings.ics_path, announce_errors=False)
@@ -1141,9 +1149,6 @@ class TimelineTab(QWidget):
         self.panel.refresh()
         self.refresh_canvas()
 
-    def open_recurring_list(self) -> None:
-        from .recurring_dialog import RecurringListDialog
-        RecurringListDialog(self.state, self).exec()
         self.refresh_canvas()
 
     def undo(self) -> None:

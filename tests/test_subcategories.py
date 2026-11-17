@@ -264,3 +264,68 @@ def test_no_estimate_field_and_actual_hours_in_task_list(win):
     assert tab.table.item(tab.table.currentRow(), col).text() == "2.25h"
     tab.select_task("T-0003")
     assert tab.table.item(tab.table.currentRow(), col).text() == ""
+
+
+def test_priority_highest(win):
+    from worklog_canvas.core import timeline as tl
+    dlg = _dialog(win)
+    assert list(dlg.priority.buttons) == ["最高", "高", "中", "低"]
+    dlg.name.setText("至急")
+    dlg.priority.setCurrentText("最高")
+    dlg._save()
+    t = win.state.repo.tasks[-1]
+    assert t.priority == "最高"
+    assert DataFolder(win.state.folder.root).user("fukui").get_task(t.id).priority == "最高"
+    assert [x.id for x in tl.sort_open_tasks([Task("A", "a", priority="高"), Task("B", "b", priority="最高")])] == ["B", "A"]
+
+
+def test_progress_bar_and_number_are_linked(win):
+    p = _dialog(win).progress
+    p.setValue(40)
+    assert (p.slider.value(), p.spin.value()) == (8, 40)
+    p.slider.setValue(13)
+    assert p.spin.value() == 65 and p.value5() == 65
+    p.spin.setValue(72)  # 数値で入力（5の倍数でなくても打てる）
+    assert p.slider.value() == 14 and p.value5() == 70
+    p.spin.editingFinished.emit()
+    assert p.spin.value() == 70
+
+
+def test_progress_typed_number_is_saved(win):
+    t = win.state.repo.get_task("T-0001")
+    dlg = _dialog(win, task=t)
+    dlg.progress.spin.setValue(35)
+    dlg._save()
+    assert win.state.repo.get_task("T-0001").progress == 35
+
+
+def test_calendar_hover_marks_the_day_under_mouse(win):
+    from PySide6.QtCore import QDate, QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+    from worklog_canvas.ui.widgets import _CalendarHover
+    dlg = _dialog(win)
+    cal = dlg.start_date.edit.calendarWidget()
+    cal.setCurrentPage(2026, 11)
+    cal.resize(320, 240)
+    cal.show()
+    QApplication.processEvents()
+    [hover] = [c for c in cal.children() if isinstance(c, _CalendarHover)]
+    view = hover.view
+    cells = {}
+    for r in range(view.model().rowCount()):
+        for c in range(view.model().columnCount()):
+            pos = view.visualRect(view.model().index(r, c)).center()
+            d = hover.date_at(pos)
+            if d is not None:
+                cells[d.toString("yyyy-MM-dd")] = pos
+    assert {"2026-10-26", "2026-11-01", "2026-11-30", "2026-12-06"} <= set(cells)  # 前後の月の日も正しい
+    pos = cells["2026-11-12"]
+    ev = QMouseEvent(QEvent.MouseMove, QPointF(pos), QPointF(view.viewport().mapToGlobal(pos)),
+                     Qt.NoButton, Qt.NoButton, Qt.NoModifier)
+    QApplication.sendEvent(view.viewport(), ev)
+    assert hover.hovered == QDate(2026, 11, 12)
+    assert cal.dateTextFormat(QDate(2026, 11, 12)).background().color().name().upper() == "#E3F2FB"
+    QApplication.sendEvent(view.viewport(), QEvent(QEvent.Leave))
+    assert hover.hovered is None and cal.dateTextFormat(QDate(2026, 11, 12)).background().style() == Qt.NoBrush
+    cal.hide()

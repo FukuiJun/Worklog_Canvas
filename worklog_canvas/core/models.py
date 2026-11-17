@@ -17,7 +17,7 @@ STATUS_ON_HOLD = "保留"
 STATUS_DONE = "完了"
 STATUSES = (STATUS_NOT_STARTED, STATUS_IN_PROGRESS, STATUS_ON_HOLD, STATUS_DONE)
 
-PRIORITIES = ("高", "中", "低")
+PRIORITIES = ("最高", "高", "中", "低")
 
 # タスクの種類
 TYPE_WORK = "業務"  # 業務タスク: 進捗率・完了予定日・期限を持ち、完了させる
