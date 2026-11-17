@@ -36,7 +36,7 @@ D = dt.date
 
 
 def task(n, name, cat, status, prio, *, start=None, planned=None, deadline=None,
-         done=None, est=None, history=(), memo=""):
+         done=None, history=(), memo=""):
     hist = [ProgressEntry(D(2026, 11, d), p) for d, p in history]
     return Task(
         id=f"T-{n:04d}", name=name, category=cat, status=status, priority=prio,
@@ -44,7 +44,6 @@ def task(n, name, cat, status, prio, *, start=None, planned=None, deadline=None,
         planned_end=D(2026, 11, planned) if planned else None,
         deadline=D(2026, 11, deadline) if deadline else None,
         done_date=D(2026, 11, done) if done else None,
-        estimate_hours=est,
         progress=hist[-1].progress if hist else 0,
         history=hist, memo=memo,
     )
@@ -57,10 +56,10 @@ USERS = {
         "display": "福井",
         "tasks": [
             task(1, "次世代基板：マイコンのバッテリ読み取り精度の検証・評価", "次世代基板", "進行中", "高",
-                 start=2, planned=20, deadline=30, est=16.0,
+                 start=2, planned=20, deadline=30,
                  history=[(2, 10), (4, 20), (6, 30), (10, 35), (12, 40)], memo="抵抗変更後の測定は来週"),
             task(2, "IC微小電流測定用の治具作成（INA226＋Arduinoのプログラム）", "治具", "進行中", "中",
-                 start=2, planned=20, est=12.0, history=[(4, 30), (6, 40), (9, 50), (12, 60)]),
+                 start=2, planned=20, history=[(4, 30), (6, 40), (9, 50), (12, 60)]),
             task(3, "チャージャIC：10時間充電停止の確認", "チャージャIC", "完了", "中",
                  start=4, done=11, history=[(4, 50), (6, 80), (11, 100)]),
             task(4, "次世代基板：回路図レビュー指摘の反映", "次世代基板", "進行中", "中",
@@ -94,7 +93,7 @@ USERS = {
         "display": "佐藤",
         "tasks": [
             task(1, "電源基板：ノイズ対策の評価", "次世代基板", "進行中", "高", start=2, planned=19,
-                 deadline=27, est=20.0, history=[(2, 20), (4, 30), (9, 40), (13, 50)]),
+                 deadline=27, history=[(2, 20), (4, 30), (9, 40), (13, 50)]),
             task(2, "治具：負荷試験用電子負荷の制御プログラム", "治具", "進行中", "中", start=2, planned=25,
                  history=[(5, 20), (12, 30)]),
             task(3, "チャージャIC：充電電流プロファイルの確認", "チャージャIC", "進行中", "中", start=4,
@@ -130,7 +129,7 @@ USERS = {
                  history=[(4, 40), (9, 60), (12, 70)]),
             task(3, "治具製作の外注見積り比較", "治具", "完了", "中", start=5, done=10,
                  history=[(5, 50), (10, 100)]),
-            task(4, "部内予算の見直し", "管理", "進行中", "中", start=4, planned=27, deadline=30, est=8.0,
+            task(4, "部内予算の見直し", "管理", "進行中", "中", start=4, planned=27, deadline=30,
                  history=[(4, 10), (11, 20)]),
             task(5, "評価手順書の承認", "文書", "未着手", "低", planned=18),
             task(6, "顧客向け技術資料の確認", "文書", "進行中", "中", start=6, planned=10, deadline=11,

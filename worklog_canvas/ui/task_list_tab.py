@@ -1,7 +1,6 @@
 """タスク一覧画面（F-01）。"""
 from __future__ import annotations
 
-import copy
 import datetime as _dt
 from pathlib import Path
 
@@ -14,8 +13,9 @@ from PySide6.QtWidgets import (
 )
 
 from ..core import csv_import
+from ..core import timeutil as tu
 from ..core.models import (
-    PRIORITIES, STATUS_NOT_STARTED, STATUSES, TASK_NAME_MAX, TASK_TYPES, TYPE_DAILY, TYPE_RECURRING, TYPE_WORK,
+    KIND_TASK, PRIORITIES, STATUS_NOT_STARTED, STATUSES, TASK_NAME_MAX, TASK_TYPES, TYPE_DAILY, TYPE_RECURRING, TYPE_WORK,
     Task,
 )
 from .state import AppState
@@ -30,7 +30,7 @@ ALL = "すべて"
 OPEN = "未完了"
 
 COLUMNS = ["ID", "タスク名", "種類", "カテゴリ", "サブカテゴリ", "ステータス", "優先度", "開始日", "完了予定日", "期限", "完了日",
-           "予定工数", "進捗率"]
+           "実績時間", "進捗率"]
 
 
 class SortItem(QTableWidgetItem):
@@ -98,7 +98,7 @@ def duplicate_of(task: Task) -> Task:
     return Task(id="", name=(task.name[:TASK_NAME_MAX - len(suffix)] + suffix), category=task.category,
                 subcategory=task.subcategory,
                 status=STATUS_NOT_STARTED, priority=task.priority, start_date=task.start_date,
-                planned_end=task.planned_end, deadline=task.deadline, estimate_hours=task.estimate_hours,
+                planned_end=task.planned_end, deadline=task.deadline,
                 memo=task.memo, task_type=task.task_type)
 
 
@@ -217,6 +217,10 @@ class TaskListTab(QWidget):
         selected = self.selected_task_id()
         today = self.state.today()
         tasks = self.filtered_tasks()
+        actual: dict[str, int] = {}
+        for w in self.state.repo.worklogs:
+            if w.kind == KIND_TASK and w.task_id:
+                actual[w.task_id] = actual.get(w.task_id, 0) + w.duration
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(tasks))
         for r, t in enumerate(tasks):
@@ -256,9 +260,13 @@ class TaskListTab(QWidget):
                 deadline.setToolTip("期限を過ぎています")
             cells.append(deadline)
             cells.append(_date_item(t.done_date))
-            est = SortItem("" if t.estimate_hours is None else f"{t.estimate_hours:g} h")
-            est.setData(Qt.UserRole, t.estimate_hours if t.estimate_hours is not None else -1.0)
-            cells.append(est)
+            # 実績時間: これまでに作業バーで記録したメイン時間の累計（かかった工数）
+            minutes = actual.get(t.id, 0)
+            act = SortItem(tu.format_hours(minutes) if minutes else "")
+            act.setData(Qt.UserRole, minutes)
+            act.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            act.setToolTip("作業バーで記録したメイン時間の累計（サブ時間は含まない）")
+            cells.append(act)
             prog = SortItem("" if t.is_work else "—")
             prog.setData(Qt.UserRole, t.progress if t.is_work else -1)
             if not t.is_work:

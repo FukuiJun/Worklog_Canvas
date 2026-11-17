@@ -41,7 +41,6 @@ def make_user(root: Path, username: str, display: str, n_tasks: int, n_logs: int
             planned_end=today + dt.timedelta(days=rnd.randint(-10, 40)) if i % 2 else None,
             deadline=today + dt.timedelta(days=rnd.randint(0, 60)) if i % 5 == 0 else None,
             done_date=today - dt.timedelta(days=i % 30) if status == "完了" else None,
-            estimate_hours=float(rnd.choice([4, 8, 16, 24])) if i % 3 == 0 else None,
             progress=100 if status == "完了" else hist[-1].progress,
             history=hist if status != "未着手" else [], memo=""))
     open_ids = [t.id for t in tasks if t.status != "完了"]

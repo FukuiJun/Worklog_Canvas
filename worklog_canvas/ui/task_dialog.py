@@ -7,7 +7,7 @@ from dataclasses import replace
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QColorDialog, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout,
+    QColorDialog, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout,
     QInputDialog, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
@@ -150,15 +150,6 @@ class TaskDialog(QDialog):
         self.planned_end.set_date(base.planned_end)
         self.deadline.set_date(base.deadline)
         self.done_date.set_date(base.done_date)
-        self.estimate = QDoubleSpinBox()
-        self.estimate.setRange(0, 9999)
-        self.estimate.setSingleStep(0.25)
-        self.estimate.setDecimals(2)
-        self.estimate.setSuffix(" 時間")
-        self.estimate.setSpecialValueText("—")
-        self.estimate.setValue(base.estimate_hours or 0)
-        self.estimate.editingFinished.connect(
-            lambda: self.estimate.setValue(round(self.estimate.value() * 4) / 4))
         self.progress = ProgressBarInput()
         self.progress.setValue(base.progress)
         self.memo = QPlainTextEdit(base.memo)
@@ -197,7 +188,6 @@ class TaskDialog(QDialog):
         self.dates_row2 = self._date_pair(self.deadline, "完了日", self.done_date)
         form.addRow("開始日", self.dates_row1)
         form.addRow("期限", self.dates_row2)
-        form.addRow("予定工数", self.estimate)
         form.addRow(row_label("進捗率"), self.progress)
         form.addRow("メモ", self.memo)
         self.err = error_label()
@@ -235,11 +225,11 @@ class TaskDialog(QDialog):
     def _type_changed(self) -> None:
         """種類に合わせて入力欄を出し分ける。
 
-        日常・定期タスクはステータス・優先度・日付・予定工数・進捗率を持たない。
+        日常・定期タスクはステータス・優先度・日付・進捗率を持たない。
         """
         kind = self.current_type()
         is_work = kind == TYPE_WORK
-        for w in (self.status, self.priority, self.dates_row1, self.dates_row2, self.estimate, self.progress):
+        for w in (self.status, self.priority, self.dates_row1, self.dates_row2, self.progress):
             self.form.setRowVisible(w, is_work)
         self.recurrence_box.setVisible(kind == TYPE_RECURRING)
         self.type_hint.setText({
@@ -294,7 +284,6 @@ class TaskDialog(QDialog):
 
     def build(self) -> Task:
         base = copy.deepcopy(self.original) if self.original else Task(id="", name="")
-        est = self.estimate.value()
         return replace(
             base,
             name=self.name.text().strip(),
@@ -306,7 +295,6 @@ class TaskDialog(QDialog):
             planned_end=self.planned_end.date(),
             deadline=self.deadline.date(),
             done_date=self.done_date.date(),
-            estimate_hours=round(est * 4) / 4 if est > 0 else None,
             memo=self.memo.toPlainText(),
             task_type=self.current_type(),
         )

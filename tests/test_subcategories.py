@@ -145,7 +145,7 @@ def test_dates_in_two_rows_and_hidden_for_daily(win):
         assert work.form.isRowVisible(w)
     for kind in ("日常", "定期"):
         dlg = _dialog(win, kind)
-        for w in (dlg.status, dlg.priority, dlg.dates_row1, dlg.dates_row2, dlg.estimate, dlg.progress):
+        for w in (dlg.status, dlg.priority, dlg.dates_row1, dlg.dates_row2, dlg.progress):
             assert not dlg.form.isRowVisible(w), kind
         assert dlg.form.isRowVisible(dlg.subcategory.parentWidget())
 
@@ -245,3 +245,22 @@ def test_settings_tree_shows_and_edits_subcategories(win, monkeypatch):
     dlg._delete_category()
     assert "使われているため" in dlg.cat_err.text()
     assert win.state.subcategories["設計"] == ["回路", "基板"]
+
+
+def test_no_estimate_field_and_actual_hours_in_task_list(win):
+    """予定工数は廃止。タスク一覧には、かかった時間（メイン時間の累計）を「実績時間」として出す。"""
+    from worklog_canvas.core.models import Worklog
+    from worklog_canvas.ui.task_list_tab import COLUMNS
+    assert "予定工数" not in COLUMNS
+    dlg = _dialog(win)
+    assert not hasattr(dlg, "estimate")
+    repo = win.state.repo
+    repo.add_worklog(Worklog("", D(2026, 11, 16), 540, 630, task_id="T-0001"))
+    repo.add_worklog(Worklog("", D(2026, 11, 17), 600, 645, task_id="T-0001"))
+    win.state.tasks_changed.emit()
+    tab = win.task_list
+    col = COLUMNS.index("実績時間")
+    tab.select_task("T-0001")
+    assert tab.table.item(tab.table.currentRow(), col).text() == "2.25h"
+    tab.select_task("T-0003")
+    assert tab.table.item(tab.table.currentRow(), col).text() == ""

@@ -42,22 +42,16 @@ def test_progress_rows(sample_folder):
     assert ids == ["T-0004", "T-0001", "T-0002", "T-0007", "T-0008", "T-0005", "T-0003"]
     r1 = rows[ids.index("T-0001")]
     assert (r1.actual / 60, r1.sub / 60, r1.period_main / 60, r1.remaining_days) == (24.75, 0, 13.0, 8)
-    assert r1.over_estimate  # 24.75h > 予定工数 16h
     r2 = rows[ids.index("T-0002")]
     assert (r2.actual / 60, r2.sub / 60, r2.period_sub / 60) == (15.25, 2.5, 1.5)
-    assert r2.over_estimate  # 15.25h > 12h
     assert rows[ids.index("T-0004")].remaining_days == 1
     assert rows[ids.index("T-0005")].remaining_days is None
 
 
-def test_over_estimate_boundary():
-    t = Task("T-1", "a", estimate_hours=2.0)
-    w = [Worklog("W-1", D(2026, 11, 9), 600, 720, task_id="T-1")]
-    [row] = ag.progress_rows([t], w, D(2026, 11, 9), D(2026, 11, 9), D(2026, 11, 9))
-    assert not row.over_estimate  # ちょうどは超過ではない
-    w.append(Worklog("W-2", D(2026, 11, 9), 720, 735, task_id="T-1"))
-    [row] = ag.progress_rows([t], w, D(2026, 11, 9), D(2026, 11, 9), D(2026, 11, 9))
-    assert row.over_estimate
+def test_old_data_with_estimate_is_read_and_dropped():
+    """予定工数は廃止。古いデータに残っていても読み込め、次に保存したときに消える。"""
+    t = Task.from_dict({"id": "T-1", "タスク名": "a", "予定工数": 2.0})
+    assert not hasattr(t, "estimate_hours") and "予定工数" not in t.to_dict()
 
 
 def test_sub_only_task_appears_in_period():
