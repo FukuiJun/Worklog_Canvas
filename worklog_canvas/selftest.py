@@ -81,6 +81,7 @@ def run() -> int:
                 from .ui.state import AppState
                 app = QApplication.instance() or QApplication(sys.argv[:1])
                 _apply_font(app)
+                assert not app.windowIcon().isNull(), "アイコンが読み込めません"
                 folder = DataFolder(tmp / "data")
                 win = MainWindow(AppState(folder, folder.user("selftest"), Settings()))
                 win.show()

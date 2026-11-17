@@ -22,12 +22,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 NAME = "WorklogCanvas"
 DIST = ROOT / "dist" / NAME
+ICON = ROOT / "worklog_canvas" / "ui" / "resources" / "app_icon.ico"  # exe とウィンドウのアイコン
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
 PYINSTALLER_ARGS = [
     "--noconfirm", "--clean", "--onedir", "--windowed", "--name", NAME, "--paths", str(ROOT),
     "--collect-all", "icalendar", "--collect-all", "recurring_ical_events", "--collect-all", "x_wr_timezone",
     "--collect-data", "tzdata",
+    "--icon", str(ICON),
+    "--add-data", f"{ICON}{os.pathsep}worklog_canvas/ui/resources",
     "--exclude-module", "tkinter", "--exclude-module", "pytest", "--exclude-module", "icalendar.tests",
     "--distpath", str(ROOT / "dist"), "--workpath", str(ROOT / "build"), "--specpath", str(ROOT / "build"),
     str(ROOT / "packaging" / f"{NAME}.py"),

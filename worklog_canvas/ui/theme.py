@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication
 
@@ -178,8 +180,18 @@ QSpinBox::down-arrow, QDoubleSpinBox::down-arrow, QTimeEdit::down-arrow {{ image
 """
 
 
+ICON_FILE = Path(__file__).resolve().parent / "resources" / "app_icon.ico"
+
+
+def app_icon():
+    """アプリのアイコン（デスクワーク×カレンダー）。元絵は resources/app_icon.svg。"""
+    from PySide6.QtGui import QIcon
+    return QIcon(str(ICON_FILE))
+
+
 def apply(app: QApplication) -> None:
-    """アプリ全体に見た目を当てる。"""
+    """アプリ全体に見た目とアイコンを当てる。"""
+    app.setWindowIcon(app_icon())
     app.setStyle("Fusion")  # どのPCでも同じ見た目にする（スタイルシートの角丸がきれいに出る）
     try:
         arrows = _arrow_rules(_arrow_images())
