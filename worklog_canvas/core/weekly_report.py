@@ -52,6 +52,17 @@ class TaskRow:
 
 
 @dataclass
+class RoutineRow:
+    """日常・定期タスクの今週の時間（週報では業務タスクとは別の表にまとめる）。"""
+    task_id: str
+    task_type: str
+    name: str
+    category: str
+    week_main: int
+    week_sub: int
+
+
+@dataclass
 class OneoffRow:
     date: _dt.date
     start: int
@@ -79,7 +90,7 @@ class WeeklyReport:
     working: int
     done_count: int
     in_progress_count: int
-    rows: list[TaskRow]
+    rows: list[TaskRow]  # 業務タスク
     oneoffs: list[OneoffRow]
     days: list[DayRow]
     categories: list[str]  # 日別の積み上げの順（記録のあるカテゴリのみ）
@@ -88,6 +99,7 @@ class WeeklyReport:
     reflection: str
     worklog_count: int = 0
     category_colors: dict[str, str] = field(default_factory=dict)
+    routines: list["RoutineRow"] = field(default_factory=list)  # 日常・定期タスク（別の表）
 
     @property
     def week_end(self) -> _dt.date:
@@ -123,7 +135,7 @@ def _hours(minutes: int) -> float:
 
 def next_week_candidates(tasks: Iterable[Task], n: int = NEXT_WEEK_AUTO_COUNT) -> list[Task]:
     """未完了タスクを完了予定日の近い順に n 件（完了予定日が未設定のものは後ろ）。"""
-    open_tasks = [t for t in tasks if t.is_open]
+    open_tasks = [t for t in tasks if t.is_open and t.is_work]
     open_tasks.sort(key=lambda t: (t.planned_end or _dt.date.max, t.id))
     return open_tasks[:n]
 
@@ -153,7 +165,13 @@ def build_report(tasks: list[Task], worklogs: list[Worklog], note: WeeklyNote | 
     main_total = ag.minutes_by_task(until_end)
 
     rows = []
+    routines = []
     for t in tasks:
+        if not t.is_work:  # 日常・定期タスクは時間だけを別の表に
+            if t.id in main_w or t.id in sub_w:
+                routines.append(RoutineRow(t.id, t.task_type, t.name, t.category or ag.UNCATEGORIZED_LABEL,
+                                           main_w.get(t.id, 0), sub_w.get(t.id, 0)))
+            continue
         progress_changed = any(week_start <= e.date <= week_end for e in t.history)
         done_in_week = t.done_date is not None and week_start <= t.done_date <= week_end
         if not (t.id in main_w or t.id in sub_w or progress_changed or done_in_week):
@@ -165,6 +183,7 @@ def build_report(tasks: list[Task], worklogs: list[Worklog], note: WeeklyNote | 
             progress_end=ag.progress_on(t, week_end) if t.history else t.progress,
             planned_end=t.planned_end, deadline=t.deadline))
     rows.sort(key=lambda r: (_STATUS_ORDER.get(r.status, 9), -r.week_main, r.task_id))
+    routines.sort(key=lambda r: (-r.week_main, r.task_id))
 
     oneoffs = []
     for w in sorted(in_week, key=lambda w: (w.date, w.start, w.id)):
@@ -184,12 +203,13 @@ def build_report(tasks: list[Task], worklogs: list[Worklog], note: WeeklyNote | 
     return WeeklyReport(
         display_name=display_name, week_start=week_start, created=today,
         working=ag.working_minutes(in_week),
-        done_count=sum(1 for t in tasks if t.done_date and week_start <= t.done_date <= week_end),
-        in_progress_count=sum(1 for t in tasks if t.status == STATUS_IN_PROGRESS),
+        done_count=sum(1 for t in tasks if t.is_work and t.done_date and week_start <= t.done_date <= week_end),
+        in_progress_count=sum(1 for t in tasks if t.is_work and t.status == STATUS_IN_PROGRESS),
         rows=rows, oneoffs=oneoffs, days=days, categories=cats,
         next_week=note_text or _auto_next_week(tasks), next_week_auto=not note_text,
         reflection=(note.reflection if note else "").strip(),
         worklog_count=len(in_week),
+        routines=routines,
         category_colors=dict(category_colors or {}),
     )
 
@@ -218,6 +238,12 @@ def report_text(rep: WeeklyReport) -> str:
         if r.deadline:
             parts.append(f"期限 {r.deadline:%m/%d}")
         out.append(f"・[{r.status}] {r.name}（{r.category}）　" + "／".join(parts))
+    if rep.routines:
+        out.append("")
+        out.append("■日常・定期の作業")
+        for r in rep.routines:
+            sub = f"／サブ {tu.format_hours(r.week_sub)}" if r.week_sub else ""
+            out.append(f"・[{r.task_type}] {r.name}　今週 {tu.format_hours(r.week_main)}{sub}")
     out.append("")
     out.append("■単発作業")
     if not rep.oneoffs:
@@ -367,6 +393,20 @@ def write_xlsx(rep: WeeklyReport, path: str | Path) -> Path:
         row += 1
     if break_after:
         ws.row_breaks.append(Break(id=break_after))
+
+    # 3'. 日常・定期の作業（業務タスクとは別の表）
+    if rep.routines:
+        row = section(row + 1, "日常・定期の作業")
+        header_row(row, ["種類", "タスク名", "今週の時間(h)", "今週のサブ時間(h)"], cols=[1, 2, 4, 5])
+        ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=3)
+        row += 1
+        for r in rep.routines:
+            put(row, 1, r.task_type, border=box, align=Alignment(horizontal="center"))
+            ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=3)
+            put(row, 2, r.name, border=box)
+            put(row, 4, _hours(r.week_main), fmt=HOURS_FORMAT, border=box)
+            put(row, 5, _hours(r.week_sub), fmt=HOURS_FORMAT, border=box)
+            row += 1
 
     # 4. 単発作業
     row = section(row + 1, "単発作業")

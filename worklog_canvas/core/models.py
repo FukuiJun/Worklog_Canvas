@@ -19,6 +19,12 @@ STATUSES = (STATUS_NOT_STARTED, STATUS_IN_PROGRESS, STATUS_ON_HOLD, STATUS_DONE)
 
 PRIORITIES = ("高", "中", "低")
 
+# タスクの種類
+TYPE_WORK = "業務"  # 業務タスク: 進捗率・完了予定日・期限を持ち、完了させる
+TYPE_DAILY = "日常"  # 日常タスク: メール対応・雑務など終わりのない日々の作業（進捗率・日付・予定工数なし）
+TYPE_RECURRING = "定期"  # 定期タスク: 繰り返しの時間帯（定期の予定）を持つ（進捗率・日付・予定工数なし）
+TASK_TYPES = (TYPE_WORK, TYPE_DAILY, TYPE_RECURRING)
+
 KIND_TASK = "タスク"
 KIND_ONEOFF = "単発作業"
 KINDS = (KIND_TASK, KIND_ONEOFF)
@@ -93,6 +99,19 @@ class Task:
     progress: int = 0
     history: list[ProgressEntry] = field(default_factory=list)
     memo: str = ""
+    task_type: str = TYPE_WORK  # 種類
+
+    @property
+    def is_work(self) -> bool:
+        """業務タスクか（進捗率・完了予定日・期限を扱うのは業務タスクだけ）。"""
+        return self.task_type == TYPE_WORK
+
+    def clear_work_fields(self) -> None:
+        """日常・定期タスクは進捗率・日付・予定工数を持たない。"""
+        self.planned_end = self.deadline = None
+        self.estimate_hours = None
+        self.progress = 0
+        self.history = []
 
     # 進捗率（F-03）
     def set_progress(self, value: int, today: _dt.date) -> None:
@@ -140,6 +159,8 @@ class Task:
             raise ValidationError("ステータス", f"ステータスが不正です: {self.status}")
         if self.priority not in PRIORITIES:
             raise ValidationError("優先度", f"優先度が不正です: {self.priority}")
+        if self.task_type not in TASK_TYPES:
+            raise ValidationError("種類", f"種類が不正です: {self.task_type}")
         validate_progress(self.progress)
         validate_estimate(self.estimate_hours)
 
@@ -158,6 +179,7 @@ class Task:
             "進捗率": self.progress,
             "進捗履歴": [e.to_dict() for e in self.history],
             "メモ": self.memo,
+            "種類": self.task_type,
         }
 
     @classmethod
@@ -177,6 +199,7 @@ class Task:
             progress=int(d.get("進捗率", 0)),
             history=[ProgressEntry.from_dict(e) for e in d.get("進捗履歴", [])],
             memo=d.get("メモ") or "",
+            task_type=d.get("種類") or TYPE_WORK,  # 種類のない古いデータは業務タスク
         )
 
 

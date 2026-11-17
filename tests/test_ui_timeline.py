@@ -240,11 +240,11 @@ def test_task_list_overdue_colors_and_filters(win):
     tab = win.task_list
     tab.select_task("T-0003")
     row = tab.table.currentRow()
-    assert tab.table.item(row, 6).foreground().color().name().upper() == "#E67E22"
-    assert tab.table.item(row, 7).foreground().color().name().upper() == "#D32F2F"
+    assert tab.table.item(row, 7).foreground().color().name().upper() == "#E67E22"
+    assert tab.table.item(row, 8).foreground().color().name().upper() == "#D32F2F"
     tab.select_task("T-0004")
     row = tab.table.currentRow()
-    assert tab.table.item(row, 7).foreground().color().name().upper() != "#D32F2F"  # 完了は色を付けない
+    assert tab.table.item(row, 8).foreground().color().name().upper() != "#D32F2F"  # 完了は色を付けない
     tab.f_status.setCurrentText("未完了")
     assert {t.id for t in tab.filtered_tasks()} == {"T-0001", "T-0002", "T-0003"}
     tab.f_status.setCurrentText("すべて")

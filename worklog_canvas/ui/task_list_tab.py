@@ -8,12 +8,16 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QSlider,
+    QAbstractItemView, QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMenu, QMessageBox, QPushButton,
+    QSlider,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from ..core import csv_import
-from ..core.models import PRIORITIES, STATUS_NOT_STARTED, STATUSES, TASK_NAME_MAX, Task
+from ..core.models import (
+    PRIORITIES, STATUS_NOT_STARTED, STATUSES, TASK_NAME_MAX, TASK_TYPES, TYPE_DAILY, TYPE_RECURRING, TYPE_WORK,
+    Task,
+)
 from .state import AppState
 from .task_dialog import TaskDialog
 from .widgets import color_icon
@@ -25,7 +29,7 @@ UNCATEGORIZED = "（未分類）"
 ALL = "すべて"
 OPEN = "未完了"
 
-COLUMNS = ["ID", "タスク名", "カテゴリ", "ステータス", "優先度", "開始日", "完了予定日", "期限", "完了日",
+COLUMNS = ["ID", "タスク名", "種類", "カテゴリ", "ステータス", "優先度", "開始日", "完了予定日", "期限", "完了日",
            "予定工数", "進捗率"]
 
 
@@ -94,7 +98,7 @@ def duplicate_of(task: Task) -> Task:
     return Task(id="", name=(task.name[:TASK_NAME_MAX - len(suffix)] + suffix), category=task.category,
                 status=STATUS_NOT_STARTED, priority=task.priority, start_date=task.start_date,
                 planned_end=task.planned_end, deadline=task.deadline, estimate_hours=task.estimate_hours,
-                memo=task.memo)
+                memo=task.memo, task_type=task.task_type)
 
 
 class TaskListTab(QWidget):
@@ -104,6 +108,14 @@ class TaskListTab(QWidget):
         bar = QHBoxLayout()
         self.btn_add = QPushButton("＋ タスクを追加")
         self.btn_add.setProperty("accent", True)
+        self.add_menu = QMenu(self.btn_add)
+        for kind, text, tip in ((TYPE_WORK, "業務タスク", "進捗率・完了予定日・期限を管理し、完了させるタスク"),
+                                (TYPE_DAILY, "日常タスク", "メール対応・雑務など終わりのない日々の作業"),
+                                (TYPE_RECURRING, "定期タスク", "朝会など決まった時間に繰り返す作業")):
+            a = self.add_menu.addAction(f"{text}　—　{tip}")
+            a.setObjectName(kind)
+            a.triggered.connect(lambda _c=False, k=kind: self.add_task(k))
+        self.btn_add.setMenu(self.add_menu)
         self.btn_edit = QPushButton("編集")
         self.btn_dup = QPushButton("複製")
         self.btn_del = QPushButton("削除")
@@ -115,6 +127,10 @@ class TaskListTab(QWidget):
         bar.addWidget(QLabel("カテゴリ"))
         self.f_category = QComboBox()
         bar.addWidget(self.f_category)
+        bar.addWidget(QLabel("種類"))
+        self.f_type = QComboBox()
+        self.f_type.addItems([ALL, *TASK_TYPES])
+        bar.addWidget(self.f_type)
         bar.addWidget(QLabel("ステータス"))
         self.f_status = QComboBox()
         self.f_status.addItems([ALL, OPEN, *STATUSES])
@@ -146,7 +162,6 @@ class TaskListTab(QWidget):
         lay.addWidget(self.table, 1)
         lay.addWidget(legend)
 
-        self.btn_add.clicked.connect(self.add_task)
         self.btn_edit.clicked.connect(self.edit_selected)
         self.btn_dup.clicked.connect(self.duplicate_selected)
         self.btn_del.clicked.connect(self.delete_selected)
@@ -154,6 +169,7 @@ class TaskListTab(QWidget):
         self.table.cellDoubleClicked.connect(lambda r, c: self.edit_selected())
         self.f_category.currentIndexChanged.connect(self.refresh)
         self.f_status.currentIndexChanged.connect(self.refresh)
+        self.f_type.currentIndexChanged.connect(self.refresh)
         self.table.itemSelectionChanged.connect(self._sync_buttons)
         state.tasks_changed.connect(self.refresh)
         state.categories_changed.connect(self._fill_category_filter)
@@ -174,8 +190,11 @@ class TaskListTab(QWidget):
 
     def filtered_tasks(self) -> list[Task]:
         cat, st = self.f_category.currentText(), self.f_status.currentText()
+        kind = self.f_type.currentText()
         out = []
         for t in self.state.repo.tasks:
+            if kind not in (ALL, "") and t.task_type != kind:
+                continue
             if cat == UNCATEGORIZED and t.category:
                 continue
             if cat not in (ALL, UNCATEGORIZED, "") and t.category != cat:
@@ -201,6 +220,9 @@ class TaskListTab(QWidget):
             name = SortItem(t.name)
             name.setToolTip(t.memo or t.name)
             cells.append(name)
+            kind_item = SortItem(t.task_type)
+            kind_item.setData(Qt.UserRole, TASK_TYPES.index(t.task_type))
+            cells.append(kind_item)
             cat = SortItem(t.category or "")
             cat.setIcon(color_icon(self.state.task_color(t)))
             cells.append(cat)
@@ -225,15 +247,21 @@ class TaskListTab(QWidget):
             est = SortItem("" if t.estimate_hours is None else f"{t.estimate_hours:g} h")
             est.setData(Qt.UserRole, t.estimate_hours if t.estimate_hours is not None else -1.0)
             cells.append(est)
-            prog = SortItem("")
-            prog.setData(Qt.UserRole, t.progress)
+            prog = SortItem("" if t.is_work else "—")
+            prog.setData(Qt.UserRole, t.progress if t.is_work else -1)
+            if not t.is_work:
+                prog.setTextAlignment(Qt.AlignCenter)
+                prog.setToolTip("日常・定期タスクは進捗率を持ちません")
             cells.append(prog)
             for c, item in enumerate(cells):
                 item.setData(Qt.UserRole + 1, t.id)
                 self.table.setItem(r, c, item)
-            slider = ProgressSlider(t.id, t.progress, not self.state.readonly)
-            slider.committed.connect(self.set_progress)
-            self.table.setCellWidget(r, len(COLUMNS) - 1, slider)
+            if t.is_work:  # 進捗率は業務タスクだけ
+                slider = ProgressSlider(t.id, t.progress, not self.state.readonly)
+                slider.committed.connect(self.set_progress)
+                self.table.setCellWidget(r, len(COLUMNS) - 1, slider)
+            else:
+                self.table.removeCellWidget(r, len(COLUMNS) - 1)
         self.table.setSortingEnabled(True)
         self.count_label.setText(f"{len(tasks)} 件 / 全 {len(self.state.repo.tasks)} 件")
         if selected:
@@ -304,8 +332,9 @@ class TaskListTab(QWidget):
         self.state.tasks_changed.emit()
         QMessageBox.information(self, "CSVの取り込み", result.message())
 
-    def add_task(self) -> None:
-        dlg = TaskDialog(self.state, None, self)
+    def add_task(self, task_type: str = TYPE_WORK) -> None:
+        """タスクを追加する（業務・日常・定期のいずれか）。"""
+        dlg = TaskDialog(self.state, None, self, task_type=task_type)
         if dlg.exec() and dlg.saved:
             self.select_task(dlg.saved.id)
 

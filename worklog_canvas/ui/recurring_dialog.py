@@ -18,6 +18,87 @@ from .state import AppState
 from .widgets import OptionalDateEdit, TimeCombo, color_icon, error_label, show_error
 
 
+class RecurrenceFields(QWidget):
+    """繰り返しの時間帯の入力欄（時刻・繰り返し・曜日・日にち・開始日・終了日）。
+
+    定期タスクの登録画面と、タスクの登録画面（種類=定期）で共用する。
+    """
+
+    def __init__(self, state: AppState, base: rc.RecurringItem, parent=None):
+        super().__init__(parent)
+        form = QFormLayout(self)
+        form.setContentsMargins(0, 0, 0, 0)
+        tbox = QWidget()
+        tlay = QHBoxLayout(tbox)
+        tlay.setContentsMargins(0, 0, 0, 0)
+        self.start, self.end = TimeCombo(), TimeCombo()
+        tlay.addWidget(self.start)
+        tlay.addWidget(QLabel("〜"))
+        tlay.addWidget(self.end)
+        tlay.addStretch()
+        form.addRow("時刻", tbox)
+        self.pattern = QComboBox()
+        self.pattern.addItems(rc.PATTERNS)
+        form.addRow("繰り返し", self.pattern)
+        self.days_box = QWidget()
+        dl = QHBoxLayout(self.days_box)
+        dl.setContentsMargins(0, 0, 0, 0)
+        self.day_checks = []
+        for name in rc.WEEKDAY_NAMES:
+            cb = QCheckBox(name)
+            self.day_checks.append(cb)
+            dl.addWidget(cb)
+        dl.addStretch()
+        form.addRow("曜日", self.days_box)
+        self.month_day = QSpinBox()
+        self.month_day.setRange(1, 31)
+        self.month_day.setSuffix(" 日")
+        self.month_day.setToolTip("その月にない日（31日など）は月末")
+        form.addRow("日にち", self.month_day)
+        self.start_date = QDateEdit()
+        self.start_date.setCalendarPopup(True)
+        self.start_date.setDisplayFormat("yyyy-MM-dd")
+        form.addRow("開始日", self.start_date)
+        self.end_date = OptionalDateEdit(today=state.today)
+        form.addRow("終了日（任意）", self.end_date)
+        self.pattern.currentTextChanged.connect(self._sync)
+        self.load(base)
+
+    def load(self, it: rc.RecurringItem) -> None:
+        self.start.set_minutes(it.start)
+        self.end.set_minutes(it.end)
+        self.pattern.setCurrentText(it.pattern)
+        for i, cb in enumerate(self.day_checks):
+            cb.setChecked(i in it.weekdays)
+        self.month_day.setValue(it.month_day)
+        sd = it.start_date
+        self.start_date.setDate(QDate(sd.year, sd.month, sd.day))
+        self.end_date.set_date(it.end_date)
+        self._sync()
+
+    def _sync(self) -> None:
+        p = self.pattern.currentText()
+        self.days_box.setEnabled(p in (rc.WEEKLY, rc.BIWEEKLY))
+        self.month_day.setEnabled(p == rc.MONTHLY)
+
+    def apply(self, it: rc.RecurringItem) -> rc.RecurringItem:
+        """入力内容を it に入れたものを返す（メイン・メモ・id はそのまま）。"""
+        d = self.start_date.date()
+        new = copy.deepcopy(it)
+        new.start, new.end = self.start.minutes(), self.end.minutes()
+        new.pattern = self.pattern.currentText()
+        new.weekdays = [i for i, cb in enumerate(self.day_checks) if cb.isChecked()]
+        new.month_day = self.month_day.value()
+        new.start_date = _dt.date(d.year(), d.month(), d.day())
+        new.end_date = self.end_date.date()
+        return new
+
+
+def default_recurrence(state: AppState) -> rc.RecurringItem:
+    return rc.RecurringItem(id="", start=540, end=600, weekdays=[state.today().weekday()],
+                            start_date=state.today())
+
+
 class RecurringDialog(QDialog):
     """定期タスクの登録（item=None）・編集。initial で初期値を渡せる（右クリックした曜日・時刻など）。"""
 
@@ -26,9 +107,8 @@ class RecurringDialog(QDialog):
         super().__init__(parent)
         self.state = state
         self.original = item
-        base = copy.deepcopy(item or initial or rc.RecurringItem(id="", start=540, end=600,
-                                                                 weekdays=[state.today().weekday()],
-                                                                 start_date=state.today()))
+        base = copy.deepcopy(item or initial or default_recurrence(state))
+        self.base = base
         self.setWindowTitle("定期タスクの編集" if item else "定期タスクの登録")
         self.saved: rc.RecurringItem | None = None
 
@@ -54,53 +134,9 @@ class RecurringDialog(QDialog):
         self.title.setMaxLength(ONEOFF_TITLE_MAX)
         self.title.setPlaceholderText("例: 朝会")
         form.addRow("タイトル", self.title)
-
-        tbox = QWidget()
-        tlay = QHBoxLayout(tbox)
-        tlay.setContentsMargins(0, 0, 0, 0)
-        self.start, self.end = TimeCombo(), TimeCombo()
-        self.start.set_minutes(base.start)
-        self.end.set_minutes(base.end)
-        tlay.addWidget(self.start)
-        tlay.addWidget(QLabel("〜"))
-        tlay.addWidget(self.end)
-        tlay.addStretch()
-        form.addRow("時刻", tbox)
-
-        self.pattern = QComboBox()
-        self.pattern.addItems(rc.PATTERNS)
-        self.pattern.setCurrentText(base.pattern)
-        form.addRow("繰り返し", self.pattern)
-        self.days_box = QWidget()
-        dl = QHBoxLayout(self.days_box)
-        dl.setContentsMargins(0, 0, 0, 0)
-        self.day_checks = []
-        for i, name in enumerate(rc.WEEKDAY_NAMES):
-            cb = QCheckBox(name)
-            cb.setChecked(i in base.weekdays)
-            self.day_checks.append(cb)
-            dl.addWidget(cb)
-        dl.addStretch()
-        form.addRow("曜日", self.days_box)
-        self.month_day = QSpinBox()
-        self.month_day.setRange(1, 31)
-        self.month_day.setSuffix(" 日")
-        self.month_day.setValue(base.month_day)
-        self.month_day.setToolTip("その月にない日（31日など）は月末")
-        form.addRow("日にち", self.month_day)
-
-        self.start_date = QDateEdit()
-        self.start_date.setCalendarPopup(True)
-        self.start_date.setDisplayFormat("yyyy-MM-dd")
-        sd = base.start_date
-        self.start_date.setDate(QDate(sd.year, sd.month, sd.day))
-        form.addRow("開始日", self.start_date)
-        self.end_date = OptionalDateEdit(today=state.today)
-        self.end_date.set_date(base.end_date)
-        form.addRow("終了日（任意）", self.end_date)
+        self.fields = RecurrenceFields(state, base)
         self.memo = QPlainTextEdit(base.memo)
         self.memo.setFixedHeight(56)
-        form.addRow("メモ", self.memo)
 
         note = QLabel("タイムラインに「定期の予定」として表示されます。右クリック →「作業バーにする」で記録します。")
         note.setWordWrap(True)
@@ -111,6 +147,10 @@ class RecurringDialog(QDialog):
         buttons.rejected.connect(self.reject)
         lay = QVBoxLayout(self)
         lay.addLayout(form)
+        lay.addWidget(self.fields)
+        memo_form = QFormLayout()
+        memo_form.addRow("メモ", self.memo)
+        lay.addLayout(memo_form)
         lay.addWidget(note)
         lay.addWidget(self.err)
         lay.addWidget(buttons)
@@ -123,33 +163,35 @@ class RecurringDialog(QDialog):
             self.rb_oneoff.setChecked(True)
         self.rb_task.setEnabled(self.task_combo.count() > 0)
         self.rb_task.toggled.connect(self._sync)
-        self.pattern.currentTextChanged.connect(self._sync)
         self._sync()
+
+    # 以前の名前でも参照できるように（テストや右クリックからの初期値の確認用）
+    @property
+    def start(self):
+        return self.fields.start
+
+    @property
+    def end(self):
+        return self.fields.end
+
+    @property
+    def day_checks(self):
+        return self.fields.day_checks
 
     def _sync(self) -> None:
         is_task = self.rb_task.isChecked()
         self.task_combo.setEnabled(is_task)
         self.title.setEnabled(not is_task)
-        p = self.pattern.currentText()
-        self.days_box.setEnabled(p in (rc.WEEKLY, rc.BIWEEKLY))
-        self.month_day.setEnabled(p == rc.MONTHLY)
 
     def build(self) -> rc.RecurringItem:
-        d = self.start_date.date()
         is_task = self.rb_task.isChecked()
-        return rc.RecurringItem(
-            id=self.original.id if self.original else "",
-            start=self.start.minutes(), end=self.end.minutes(),
-            pattern=self.pattern.currentText(),
-            kind=KIND_TASK if is_task else KIND_ONEOFF,
-            task_id=self.task_combo.currentData() if is_task else None,
-            title="" if is_task else self.title.text().strip(),
-            weekdays=[i for i, cb in enumerate(self.day_checks) if cb.isChecked()],
-            month_day=self.month_day.value(),
-            start_date=_dt.date(d.year(), d.month(), d.day()),
-            end_date=self.end_date.date(),
-            memo=self.memo.toPlainText(),
-        )
+        it = self.fields.apply(self.base)
+        it.id = self.original.id if self.original else ""
+        it.kind = KIND_TASK if is_task else KIND_ONEOFF
+        it.task_id = self.task_combo.currentData() if is_task else None
+        it.title = "" if is_task else self.title.text().strip()
+        it.memo = self.memo.toPlainText()
+        return it
 
     def _save(self) -> None:
         item = self.build()

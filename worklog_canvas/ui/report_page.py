@@ -62,6 +62,13 @@ def report_html(rep: wr.WeeklyReport) -> str:
         out.append("</table>")
     else:
         out.append("<p>（なし）</p>")
+    if rep.routines:
+        out.append("<h3>日常・定期の作業</h3><table border='1' cellspacing='0' cellpadding='3'>"
+                   "<tr style='background:#F2F2F2'><th>種類</th><th>タスク名</th><th>今週の時間</th><th>サブ時間</th></tr>")
+        for r in rep.routines:
+            out.append(f"<tr><td align='center'>{e(r.task_type)}</td><td>{e(r.name)}</td>"
+                       f"<td align='right'>{h(r.week_main)}</td><td align='right'>{h(r.week_sub)}</td></tr>")
+        out.append("</table>")
     out.append("<h3>単発作業</h3>")
     if rep.oneoffs:
         out.append("<table border='1' cellspacing='0' cellpadding='3'><tr style='background:#F2F2F2'>"

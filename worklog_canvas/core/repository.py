@@ -337,8 +337,14 @@ class UserRepository:
                     sub.kind, sub.task_id, sub.title = KIND_ONEOFF, None, title
         if linked:
             self.save_worklogs()  # 先に作業バーを保存（途中で落ちても参照切れにならない）
+        from .models import TYPE_RECURRING
         from .recurring import convert_task_to_oneoff
-        if convert_task_to_oneoff(self.recurring, task_id, task.name):
+        if task.task_type == TYPE_RECURRING:  # 定期タスクは、その繰り返しの時間帯もいっしょに消す
+            before = len(self.recurring)
+            self.recurring = [r for r in self.recurring if not (r.kind == KIND_TASK and r.task_id == task_id)]
+            if len(self.recurring) != before:
+                self._save(RECURRING_FILE)
+        elif convert_task_to_oneoff(self.recurring, task_id, task.name):
             self._save(RECURRING_FILE)
         self.tasks = [t for t in self.tasks if t.id != task_id]
         self.save_tasks()
@@ -425,6 +431,10 @@ class UserRepository:
         item.validate()
         if item.kind == KIND_TASK:
             self.get_task(item.task_id)  # 存在しないタスクは KeyError
+
+    def recurring_of(self, task_id: str) -> list:
+        """そのタスクをメインにした定期の時間帯。"""
+        return [r for r in self.recurring if r.kind == KIND_TASK and r.task_id == task_id]
 
     def add_recurring(self, item):
         """定期タスクを登録する（item.id は無視して自動採番）。"""
