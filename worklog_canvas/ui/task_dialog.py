@@ -17,7 +17,9 @@ from ..core.models import (
     TYPE_WORK, Category, Task, ValidationError,
 )
 from .state import AppState
-from .widgets import OptionalDateEdit, ProgressBarInput, RadioChoice, color_icon, error_label, show_error
+from .widgets import (
+    OptionalDateEdit, ProgressBarInput, RadioChoice, color_icon, error_label, row_label, show_error,
+)
 from .worklog_dialog import confirm_done
 
 
@@ -188,15 +190,15 @@ class TaskDialog(QDialog):
         form.addRow("タスク名 *", name_box)
         form.addRow("カテゴリ", cat_box)
         form.addRow("サブカテゴリ", sub_box)
-        form.addRow("ステータス", self.status)
-        form.addRow("優先度", self.priority)
+        form.addRow(row_label("ステータス"), self.status)
+        form.addRow(row_label("優先度"), self.priority)
         # 日付4項目は2行にまとめる（開始日・完了予定日 / 期限・完了日）
         self.dates_row1 = self._date_pair(self.start_date, "完了予定日", self.planned_end)
         self.dates_row2 = self._date_pair(self.deadline, "完了日", self.done_date)
         form.addRow("開始日", self.dates_row1)
         form.addRow("期限", self.dates_row2)
         form.addRow("予定工数", self.estimate)
-        form.addRow("進捗率", self.progress)
+        form.addRow(row_label("進捗率"), self.progress)
         form.addRow("メモ", self.memo)
         self.err = error_label()
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)

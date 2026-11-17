@@ -14,6 +14,7 @@ from ..core import timeutil as tu
 
 ERROR_STYLE = "color: #C62828;"
 _NONE_DATE = QDate(2000, 1, 1)
+ROW_HEIGHT = 36  # ラジオボタン・バーの行の高さ（入力欄の高さ＋上下の余白）
 
 
 def color_icon(color: str, size: int = 12) -> QIcon:
@@ -177,6 +178,14 @@ def _clear_icon() -> QIcon:
     return icon
 
 
+def row_label(text: str) -> QLabel:
+    """ラジオボタン・バーの行の見出し（行の高さに合わせて上下中央にそろえる）。"""
+    label = QLabel(text)
+    label.setMinimumHeight(ROW_HEIGHT)
+    label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    return label
+
+
 class RadioChoice(QWidget):
     """横に並べたラジオボタンで1つ選ぶ（QComboBox と同じ currentText / setCurrentText で使える）。"""
 
@@ -185,8 +194,9 @@ class RadioChoice(QWidget):
     def __init__(self, items, parent=None):
         super().__init__(parent)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 2, 0, 2)
+        lay.setContentsMargins(0, 4, 0, 4)
         lay.setSpacing(18)
+        self.setMinimumHeight(ROW_HEIGHT)  # ほかの入力欄と同じ高さにして、行の間を詰めすぎない
         self.group = QButtonGroup(self)
         self.buttons: dict[str, QRadioButton] = {}
         for text in items:
@@ -214,7 +224,8 @@ class ProgressBarInput(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setContentsMargins(0, 4, 0, 4)
+        self.setMinimumHeight(ROW_HEIGHT)
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, 20)  # 1目盛り = 5%
         self.slider.setPageStep(2)
