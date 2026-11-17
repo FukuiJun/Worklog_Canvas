@@ -17,7 +17,7 @@ from ..core.models import (
 )
 from ..core.overlap import OverlapError
 from .state import AppState
-from .widgets import ProgressSpin, TimeCombo, color_icon, error_label, show_error
+from .widgets import ProgressBarInput, TimeCombo, color_icon, error_label, show_error
 
 
 def confirm_done(parent, state: AppState, task_id: str) -> None:
@@ -80,7 +80,7 @@ class WorklogDialog(QDialog):
         self.memo = QPlainTextEdit(worklog.memo)
         self.memo.setFixedHeight(60)
         form.addRow("メモ", self.memo)
-        self.progress = ProgressSpin()
+        self.progress = ProgressBarInput()
         form.addRow("進捗率（メインのタスク）", self.progress)
 
         self.err = error_label()

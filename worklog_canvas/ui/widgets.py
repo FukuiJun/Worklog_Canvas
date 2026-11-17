@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import datetime as _dt
 
-from PySide6.QtCore import QDate, QEvent, Qt, QTimer
-from PySide6.QtGui import QColor, QIcon, QPixmap
-from PySide6.QtWidgets import QComboBox, QDateEdit, QHBoxLayout, QLabel, QLineEdit, QSpinBox, QToolButton, QWidget
+from PySide6.QtCore import QDate, QEvent, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import (
+    QButtonGroup, QComboBox, QDateEdit, QHBoxLayout, QLabel, QLineEdit, QRadioButton, QSizePolicy, QSlider,
+    QToolButton, QWidget,
+)
 
 from ..core import timeutil as tu
 
@@ -75,9 +78,19 @@ class OptionalDateEdit(QWidget):
         self.edit.setSpecialValueText("—")
         self.edit.setDate(_NONE_DATE)
         clear = QToolButton()
-        clear.setText("×")
+        clear.setObjectName("dateClear")  # 丸い小さな「消す」ボタン（theme.py で見た目を決める）
+        clear.setIcon(_clear_icon())
+        clear.setIconSize(QSize(10, 10))
+        clear.setFixedSize(26, 26)
+        clear.setCursor(Qt.PointingHandCursor)
         clear.setToolTip("未設定にする")
+        clear.setAccessibleName("日付を消す")
         clear.clicked.connect(lambda: self.set_date(None))
+        sp = clear.sizePolicy()
+        sp.setRetainSizeWhenHidden(True)  # 消えても欄の幅は変えない
+        clear.setSizePolicy(sp)
+        self.clear_button = clear
+        lay.setSpacing(4)
         lay.addWidget(self.edit, 1)
         lay.addWidget(clear)
         cal = self.edit.calendarWidget()
@@ -85,6 +98,8 @@ class OptionalDateEdit(QWidget):
         cal.activated.connect(self._picked)
         self._popup = cal.window()
         self.edit.dateChanged.connect(self._changed)
+        self.edit.dateChanged.connect(lambda _d: self._sync_clear())
+        self._sync_clear()
         self._inputs = [self.edit] + self.edit.findChildren(QLineEdit)
         for w in self._inputs + [self._popup]:
             w.installEventFilter(self)
@@ -108,6 +123,10 @@ class OptionalDateEdit(QWidget):
             self._setting = False
 
     # --- 未設定の欄を操作し始めたとき ---
+    def _sync_clear(self) -> None:
+        """日付が入っているときだけ「消す」ボタンを出す。"""
+        self.clear_button.setVisible(self.date() is not None)
+
     def _start_from_today(self, provisional: bool) -> None:
         if self.date() is None:
             self._provisional = provisional
@@ -142,18 +161,80 @@ class OptionalDateEdit(QWidget):
         return super().eventFilter(obj, ev)
 
 
-class ProgressSpin(QSpinBox):
-    """進捗率（0〜100、5刻み）。5の倍数でない値は最も近い5の倍数に直す。"""
+def _clear_icon() -> QIcon:
+    """細い × の絵（文字の「×」より小さく、線の太さがそろう）。"""
+    icon = QIcon()
+    for color, mode in (("#7A8A99", QIcon.Normal), ("#0B5E8A", QIcon.Active)):
+        pm = QPixmap(40, 40)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(QColor(color), 5, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(10, 10, 30, 30)
+        p.drawLine(30, 10, 10, 30)
+        p.end()
+        icon.addPixmap(pm, mode)
+    return icon
+
+
+class RadioChoice(QWidget):
+    """横に並べたラジオボタンで1つ選ぶ（QComboBox と同じ currentText / setCurrentText で使える）。"""
+
+    currentTextChanged = Signal(str)
+
+    def __init__(self, items, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 2, 0, 2)
+        lay.setSpacing(18)
+        self.group = QButtonGroup(self)
+        self.buttons: dict[str, QRadioButton] = {}
+        for text in items:
+            b = QRadioButton(text)
+            self.group.addButton(b)
+            self.buttons[text] = b
+            lay.addWidget(b)
+            b.toggled.connect(lambda on, t=text: on and self.currentTextChanged.emit(t))
+        lay.addStretch()
+        if items:
+            self.buttons[items[0]].setChecked(True)
+
+    def currentText(self) -> str:
+        b = self.group.checkedButton()
+        return b.text() if b else ""
+
+    def setCurrentText(self, text: str) -> None:
+        if text in self.buttons:
+            self.buttons[text].setChecked(True)
+
+
+class ProgressBarInput(QWidget):
+    """進捗率をバー（スライダー）で入力する（0〜100、5刻み）。右に「40%」のように数字を出す。"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setRange(0, 100)
-        self.setSingleStep(5)
-        self.setSuffix(" %")
-        self.editingFinished.connect(lambda: self.setValue(self.value5()))
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(0, 20)  # 1目盛り = 5%
+        self.slider.setPageStep(2)
+        self.slider.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.slider.setAccessibleName("進捗率")
+        self.label = QLabel("0%")
+        self.label.setMinimumWidth(44)
+        self.label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        lay.addWidget(self.slider, 1)
+        lay.addWidget(self.label)
+        self.slider.valueChanged.connect(lambda v: self.label.setText(f"{v * 5}%"))
+
+    def value(self) -> int:
+        return self.slider.value() * 5
 
     def value5(self) -> int:
-        return int(round(self.value() / 5)) * 5
+        return self.value()
+
+    def setValue(self, value: int) -> None:
+        self.slider.setValue(int(round(value / 5)))
 
 
 class TimeCombo(QComboBox):

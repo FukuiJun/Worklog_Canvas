@@ -17,7 +17,7 @@ from ..core.models import (
     TYPE_WORK, Category, Task, ValidationError,
 )
 from .state import AppState
-from .widgets import OptionalDateEdit, ProgressSpin, color_icon, error_label, show_error
+from .widgets import OptionalDateEdit, ProgressBarInput, RadioChoice, color_icon, error_label, show_error
 from .worklog_dialog import confirm_done
 
 
@@ -117,7 +117,8 @@ class TaskDialog(QDialog):
         cl = QHBoxLayout(cat_box)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.addWidget(self.category, 1)
-        btn_cat = QPushButton("新しいカテゴリ…")
+        btn_cat = QPushButton("新しく追加…")
+        btn_cat.setToolTip("新しいカテゴリを追加")
         btn_cat.setMinimumWidth(150)
         btn_cat.clicked.connect(self._new_category)
         cl.addWidget(btn_cat)
@@ -129,18 +130,17 @@ class TaskDialog(QDialog):
         sl = QHBoxLayout(sub_box)
         sl.setContentsMargins(0, 0, 0, 0)
         sl.addWidget(self.subcategory, 1)
-        self.btn_sub = QPushButton("新しいサブカテゴリ…")
+        self.btn_sub = QPushButton("新しく追加…")
+        self.btn_sub.setToolTip("選んだカテゴリの下に新しいサブカテゴリを追加")
         self.btn_sub.setMinimumWidth(150)
         self.btn_sub.clicked.connect(self._new_subcategory)
         sl.addWidget(self.btn_sub)
         self._fill_subcategories(base.subcategory)
         self.category.currentIndexChanged.connect(lambda _i: self._fill_subcategories(""))
 
-        self.status = QComboBox()
-        self.status.addItems(STATUSES)
+        self.status = RadioChoice(STATUSES)
         self.status.setCurrentText(base.status)
-        self.priority = QComboBox()
-        self.priority.addItems(PRIORITIES)
+        self.priority = RadioChoice(PRIORITIES)
         self.priority.setCurrentText(base.priority)
         self.start_date, self.planned_end, self.deadline, self.done_date = (
             OptionalDateEdit(today=state.today) for _ in range(4))
@@ -157,7 +157,7 @@ class TaskDialog(QDialog):
         self.estimate.setValue(base.estimate_hours or 0)
         self.estimate.editingFinished.connect(
             lambda: self.estimate.setValue(round(self.estimate.value() * 4) / 4))
-        self.progress = ProgressSpin()
+        self.progress = ProgressBarInput()
         self.progress.setValue(base.progress)
         self.memo = QPlainTextEdit(base.memo)
         self.memo.setFixedHeight(80)
@@ -223,9 +223,9 @@ class TaskDialog(QDialog):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(left, 1)
         label = QLabel(right_label)
-        label.setMinimumWidth(78)
-        label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        lay.addSpacing(8)
+        label.setFixedWidth(84)  # 「完了予定日」「完了日」の左端と、その右の欄の左端をそろえる
+        label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        lay.addSpacing(12)
         lay.addWidget(label)
         lay.addWidget(right, 1)
         return box
